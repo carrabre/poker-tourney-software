@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback, Suspense } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import TournamentClock from '@/app/components/TournamentClock';
@@ -180,7 +180,8 @@ const generateDefaultPayouts = (
   return payouts;
 };
 
-export default function TournamentView() {
+// Wrap the main component with a loader component that uses Suspense
+function TournamentViewContent() {
   const searchParams = useSearchParams();
   const tournamentId = searchParams?.get('id') || 'demo';
   const isDemoTournament = tournamentId === 'demo';
@@ -432,57 +433,57 @@ export default function TournamentView() {
     fetchTournament();
   }, [tournamentId, isDemoTournament]);
   
-  // Replace the auto-save effect with a throttled version
+  // Replace the auto-save effect with a more responsive version
   useEffect(() => {
-    // Clear any existing interval
-    if (autoSaveInterval) {
-      clearInterval(autoSaveInterval);
-    }
-    
-    // Set up a new interval for auto-saving (every 10 seconds)
-    const intervalId = setInterval(() => {
-      if (tournamentState && tournamentId !== 'demo') {
-        const now = Date.now();
-        // Throttle saves to prevent excessive updates
-        if (now - lastSaveTime >= AUTO_SAVE_THROTTLE) {
-          console.log('Auto-saving tournament state and data...');
-          saveTournamentState(tournamentId, tournamentState);
-          
-          // Only save complete state when necessary and throttle it
-          if (players.length > 0 || tables.length > 0) {
-            saveCompleteTournamentState(tournamentId, tournamentState, players, tables);
-          }
-          
-          setLastSaveTime(now);
-        }
-      }
-    }, 10000); // Check every 10 seconds
-    
-    setAutoSaveInterval(intervalId);
-    
-    // Cleanup function to clear the interval when component unmounts
-    return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
-    };
-  }, [tournamentId, tournamentState, players, tables, lastSaveTime]);
-
-  // Modify the tournament state update effect to be throttled too
-  useEffect(() => {
-    if (tournamentState && tournamentId !== 'demo') {
-      const now = Date.now();
-      if (now - lastSaveTime >= AUTO_SAVE_THROTTLE) {
-        console.log('Saving tournament state to localStorage on state change...');
-        saveTournamentState(tournamentId, tournamentState);
+    const saveTournamentData = () => {
+      if (!tournamentState || tournamentId === 'demo') return;
+      
+      console.log('Auto-saving tournament data...');
+      
+      // Strip out unnecessary data to keep storage size manageable
+      const essentialState = {
+        ...tournamentState,
+        // Don't include all announcements in the save to reduce size
+        announcements: tournamentState.announcements.slice(0, 5)
+      };
+      
+      // Save tournament state
+      saveTournamentState(tournamentId, essentialState);
+      
+      // Save complete state if we have players
+      if (players.length > 0) {
+        // Clean the players data before saving
+        const cleanPlayers = players.map(player => ({
+          ...player,
+          finishPosition: player.finishPosition,
+          rebuys: player.rebuys || 0,
+          addOns: player.addOns || 0
+        }));
         
-        // Update last save time
-        setLastSaveTime(now);
+        saveCompleteTournamentState(tournamentId, essentialState, cleanPlayers, tables);
       }
-    }
-  }, [tournamentState, tournamentId, lastSaveTime]);
-
-  // Also throttle the beforeunload handler
+      
+      setLastSaveTime(Date.now());
+    };
+    
+    // Debounced auto-save to prevent excessive saves
+    const timeoutId = setTimeout(saveTournamentData, 1000);
+    
+    return () => clearTimeout(timeoutId);
+  }, [
+    tournamentId, 
+    tournamentState, 
+    players, 
+    tables, 
+    // Include specific dependencies that should trigger saves
+    tournamentState?.currentLevel,
+    tournamentState?.isPaused,
+    tournamentState?.levelTime,
+    tournamentState?.isBreak,
+    tournamentState?.blinds
+  ]);
+  
+  // Also save on beforeunload
   useEffect(() => {
     const handleBeforeUnload = () => {
       if (tournamentState && tournamentId !== 'demo') {
@@ -572,7 +573,7 @@ export default function TournamentView() {
   // Use the calculated stats
   const tournamentStats = calculateTournamentStats;
   
-  // Find the next available seat at a table
+  // Find the next available seat at a table - enhanced with random assignment for multiple tables
   const findNextAvailableSeat = () => {
     // Create a mapping of filled seats by table
     const filledSeats: Record<number, Set<number>> = {};
@@ -589,7 +590,34 @@ export default function TournamentView() {
       }
     });
     
-    // Find a table with available seats (prioritize filling existing tables)
+    // If we have multiple tables, consider random assignment for better distribution
+    const tableIds = Object.keys(filledSeats).map(Number);
+    if (tableIds.length > 1) {
+      // Find tables that aren't full
+      const availableTables = tableIds.filter(tableId => {
+        const table = tables.find(t => t.id === tableId);
+        const maxSeats = table ? table.maxSeats : 9;
+        return filledSeats[tableId].size < maxSeats;
+      });
+      
+      if (availableTables.length > 0) {
+        // Randomly select a table from available tables
+        const randomTableIndex = Math.floor(Math.random() * availableTables.length);
+        const selectedTableId = availableTables[randomTableIndex];
+        
+        // Find an available seat at the selected table
+        const table = tables.find(t => t.id === selectedTableId);
+        const maxSeats = table ? table.maxSeats : 9;
+        for (let seat = 1; seat <= maxSeats; seat++) {
+          if (!filledSeats[selectedTableId].has(seat)) {
+            console.log(`Randomly assigned to table ${selectedTableId}, seat ${seat}`);
+            return { tableNumber: selectedTableId, seatNumber: seat };
+          }
+        }
+      }
+    }
+    
+    // Fall back to prioritize filling existing tables if random assignment didn't work
     for (const table of tables) {
       const tableSeats = filledSeats[table.id];
       if (tableSeats && tableSeats.size < table.maxSeats) {
@@ -1373,28 +1401,6 @@ export default function TournamentView() {
               <Link href="/tournament/new" className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors text-sm">
                 New Tournament
               </Link>
-              <button 
-                onClick={forceSaveState}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm flex items-center"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
-                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
-                </svg>
-                Save State
-              </button>
-              {debugInfo && (
-                <div className="fixed bottom-20 left-4 bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-700 text-xs font-mono text-gray-300 max-w-sm z-50 whitespace-pre-wrap">
-                  <div className="flex justify-between items-center mb-2">
-                    <strong>Debug Info</strong>
-                    <button onClick={() => setDebugInfo('')} className="text-gray-500 hover:text-white">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </div>
-                  {debugInfo}
-              </div>
-            )}
             </div>
           </div>
         </div>
@@ -1687,5 +1693,21 @@ export default function TournamentView() {
         }
       `}</style>
     </div>
+  );
+}
+
+// Main export now uses Suspense
+export default function TournamentView() {
+  return (
+    <Suspense fallback={
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#111111] to-[#000000]">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
+          <h2 className="text-xl font-semibold text-white">Loading tournament...</h2>
+        </div>
+      </div>
+    }>
+      <TournamentViewContent />
+    </Suspense>
   );
 } 

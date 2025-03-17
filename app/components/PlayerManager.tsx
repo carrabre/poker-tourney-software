@@ -96,8 +96,26 @@ const PlayerManager: React.FC<PlayerManagerProps> = ({
     );
   };
   
-  // Auto-assign a table and seat
+  // Get an array of available tables and their occupancy
+  const getTableOccupancy = (): Record<number, number> => {
+    const tableOccupancy: Record<number, number> = {};
+    
+    // Find all active tables
+    players.forEach(player => {
+      if (player.status === 'active' && player.tableNumber > 0) {
+        if (!tableOccupancy[player.tableNumber]) {
+          tableOccupancy[player.tableNumber] = 0;
+        }
+        tableOccupancy[player.tableNumber]++;
+      }
+    });
+    
+    return tableOccupancy;
+  };
+  
+  // Enhanced auto-assign table seat with random distribution
   const autoAssignTableSeat = (): { tableNumber: number, seatNumber: number } => {
+    // Use external finder if provided
     if (findNextAvailableSeat) {
       const assignment = findNextAvailableSeat();
       // Double-check for conflicts even with the provided function
@@ -107,7 +125,41 @@ const PlayerManager: React.FC<PlayerManagerProps> = ({
       // If there's a conflict, fall back to manual assignment
     }
     
-    // If no external finder provided or it resulted in conflict, use basic logic
+    // If no external finder provided or it resulted in conflict, use enhanced logic
+    const tableOccupancy = getTableOccupancy();
+    const tableNumbers = Object.keys(tableOccupancy).map(Number);
+    
+    // If we have multiple tables, consider random assignment
+    if (tableNumbers.length > 1) {
+      // Find tables that aren't full (less than 9 players)
+      const availableTables = tableNumbers.filter(tableNum => 
+        tableOccupancy[tableNum] < 9
+      );
+      
+      if (availableTables.length > 0) {
+        // Randomly select one of the available tables
+        const randomTableIndex = Math.floor(Math.random() * availableTables.length);
+        const selectedTableNumber = availableTables[randomTableIndex];
+        
+        // Find an available seat at the selected table
+        const occupiedSeats = new Set<number>();
+        players.forEach(player => {
+          if (player.status === 'active' && player.tableNumber === selectedTableNumber) {
+            occupiedSeats.add(player.seatNumber);
+          }
+        });
+        
+        // Find first available seat at selected table
+        for (let seat = 1; seat <= 9; seat++) {
+          if (!occupiedSeats.has(seat)) {
+            console.log(`Randomly assigned to table ${selectedTableNumber}, seat ${seat}`);
+            return { tableNumber: selectedTableNumber, seatNumber: seat };
+          }
+        }
+      }
+    }
+    
+    // Fall back to regular logic if random assignment didn't work
     // Find the first table with an available seat
     const tablesWithPlayers = new Map<number, Set<number>>();
     
@@ -130,7 +182,6 @@ const PlayerManager: React.FC<PlayerManagerProps> = ({
     }
     
     // If no open seats, create a new table
-    const tableNumbers = Array.from(tablesWithPlayers.keys());
     const newTableNumber = tableNumbers.length > 0 ? Math.max(...tableNumbers) + 1 : 1;
     return { tableNumber: newTableNumber, seatNumber: 1 };
   };

@@ -75,37 +75,51 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
 
   // Update timer every second with improved reliability
   useEffect(() => {
+    console.log('Timer effect running, isPaused:', isPaused, 'remainingTime:', remainingTime);
+    
     if (isPaused) {
       console.log('Timer is paused, not starting interval');
       return;
     }
     
-    console.log('Setting up timer, isPaused:', isPaused, 'remainingTime:', remainingTime);
-    
-    // Use a more reliable approach for timer updates
-    const startTime = Date.now();
-    const initialRemainingTime = remainingTime;
-    
+    // Use a more reliable interval-based approach with self-correction
+    let lastTick = Date.now();
     const timer = setInterval(() => {
-      // Calculate elapsed time since timer started
-      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
-      const newRemainingTime = Math.max(0, initialRemainingTime - elapsedSeconds);
+      const now = Date.now();
+      const elapsed = Math.floor((now - lastTick) / 1000);
+      lastTick = now;
       
-      console.log('Timer update:', newRemainingTime);
-      setRemainingTime(newRemainingTime);
-      
-      if (newRemainingTime <= 0) {
-        console.log('Timer reached zero, ending timer');
-        clearInterval(timer);
-        onTimerEnd();
+      if (elapsed > 0) {
+        console.log(`Ticking timer, elapsed: ${elapsed}s, current: ${remainingTime}s`);
+        setRemainingTime(prevTime => {
+          const newTime = Math.max(0, prevTime - elapsed);
+          if (newTime <= 0) {
+            console.log('Timer reached zero, clearing interval');
+            clearInterval(timer);
+            onTimerEnd();
+          }
+          return newTime;
+        });
       }
     }, 1000);
     
+    console.log('Timer interval set up with ID:', timer);
+    
     return () => {
-      console.log('Cleaning up timer');
+      console.log('Cleaning up timer interval');
       clearInterval(timer);
     };
-  }, [isPaused, onTimerEnd, remainingTime]);
+  }, [isPaused, onTimerEnd]);
+  
+  // Special effect to handle time remaining updates from parent
+  useEffect(() => {
+    console.log('Parent updated timeRemaining to:', timeRemaining);
+    // Only update our local state if we're paused or it's a significant change
+    if (isPaused || Math.abs(timeRemaining - remainingTime) > 1) {
+      setRemainingTime(timeRemaining);
+      console.log('Updated remainingTime to:', timeRemaining);
+    }
+  }, [timeRemaining, isPaused]);
 
   // When isFullscreen changes, we ensure the timer doesn't reset
   useEffect(() => {

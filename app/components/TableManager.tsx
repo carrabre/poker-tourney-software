@@ -27,6 +27,7 @@ const TableManager: React.FC<TableManagerProps> = ({
   const [autoBalanceThreshold, setAutoBalanceThreshold] = useState<number>(2);
   const [isPendingRedraw, setIsPendingRedraw] = useState(false);
   const [activeTableId, setActiveTableId] = useState<number | null>(null);
+  const [newTableMaxSeats, setNewTableMaxSeats] = useState<number>(9);
   
   // Process players to get table information
   useEffect(() => {
@@ -274,6 +275,7 @@ const TableManager: React.FC<TableManagerProps> = ({
     setSelectedTable(null);
   };
   
+  // Enhanced create new table function
   const createNewTable = () => {
     // Find highest table number
     const highestTableNumber = Math.max(...tables.map(t => t.tableNumber), 0);
@@ -284,11 +286,14 @@ const TableManager: React.FC<TableManagerProps> = ({
       ...prev,
       {
         tableNumber: newTableNumber,
-        maxSeats: maxPlayersPerTable,
+        maxSeats: newTableMaxSeats,
         activePlayers: 0,
         isBreaking: false
       }
     ]);
+    
+    // Show confirmation
+    alert(`Table ${newTableNumber} has been created with ${newTableMaxSeats} seats`);
   };
   
   // Get all active tables from players data
@@ -357,7 +362,7 @@ const TableManager: React.FC<TableManagerProps> = ({
     onPlayersUpdate(updatedPlayers);
   };
   
-  // Complete redraw of tables and seats
+  // Updated random seating assignment function
   const completeRedraw = () => {
     // Confirm with the user
     if (!confirm("Are you sure you want to redraw all table and seat assignments?")) {
@@ -460,119 +465,226 @@ const TableManager: React.FC<TableManagerProps> = ({
   
   return (
     <div className="space-y-8">
-      {/* Action buttons */}
-      <div className="flex flex-wrap gap-3">
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-          onClick={autoBalanceTables}
-        >
-          Auto-Balance Tables
-        </motion.button>
+      {/* Action buttons with enhanced create table section */}
+      <div className="bg-gray-800/30 backdrop-blur-sm rounded-xl p-4 border border-gray-700/50">
+        <h2 className="text-xl font-bold mb-4">Table Management Tools</h2>
         
-        <motion.button
-          whileHover={{ scale: 1.02 }}
-          whileTap={{ scale: 0.98 }}
-          className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium"
-          onClick={completeRedraw}
-        >
-          Complete Redraw
-        </motion.button>
-        
-        {tableWithFewestPlayers && (
-          <motion.button
-            whileHover={{ scale: 1.02 }}
-            whileTap={{ scale: 0.98 }}
-            className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium"
-            onClick={() => breakTable(tableWithFewestPlayers)}
-          >
-            Break Table {tableWithFewestPlayers} ({getPlayersAtTable(tableWithFewestPlayers).length} players)
-          </motion.button>
-        )}
-      </div>
-      
-      {/* Tables */}
-      <div className="space-y-6">
-        {activeTables.length === 0 ? (
-          <div className="bg-gray-800 dark:bg-black/40 rounded-lg p-6 text-center text-gray-400">
-            No active tables. Add players to create tables.
-          </div>
-        ) : (
-          activeTables.map(tableId => (
-            <motion.div
-              key={tableId}
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3 }}
-              className={`bg-white dark:bg-black/40 rounded-xl shadow-lg overflow-hidden border ${
-                activeTableId === tableId 
-                  ? 'border-blue-500' 
-                  : 'border-transparent'
-              }`}
-            >
-              <div 
-                className="p-4 border-b border-gray-200 dark:border-gray-800 flex justify-between items-center cursor-pointer"
-                onClick={() => setActiveTableId(activeTableId === tableId ? null : tableId)}
-              >
-                <h3 className="font-bold">
-                  Table {tableId} ({getPlayersAtTable(tableId).length} players)
-                </h3>
-                <span className="text-gray-500">
-                  {activeTableId === tableId ? '↑ Collapse' : '↓ Expand'}
-                </span>
-            </div>
-            
-              {activeTableId === tableId && (
-                <div className="p-4">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
-                    {Array.from({ length: maxPlayersPerTable }, (_, i) => {
-                      const seatNumber = i + 1;
-                      const player = players.find(
-                        p => p.status === 'active' && p.tableNumber === tableId && p.seatNumber === seatNumber
-                );
-                
-                return (
-                  <div 
-                          key={seatNumber}
-                          className={`border rounded-lg p-3 ${
-                            player 
-                              ? 'bg-gray-100 dark:bg-gray-800 border-blue-200 dark:border-blue-900' 
-                              : 'border-gray-200 dark:border-gray-800'
-                          }`}
-                        >
-                          <div className="text-xs text-gray-500 dark:text-gray-400 mb-1">
-                            Seat {seatNumber}
-                          </div>
-                          <div className="font-medium">
-                            {player ? player.name : 'Empty'}
-                  </div>
-                          {player && (
-                            <div className="flex justify-between mt-2 text-sm">
-                              <div className="text-gray-500 dark:text-gray-400">
-                                {player.chips.toLocaleString()} chips
-            </div>
-                              <div className="flex gap-1">
-                                {activeTables.filter(id => id !== tableId).map(otherTableId => (
-                <button 
-                                    key={otherTableId}
-                                    className="text-xs px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded"
-                                    onClick={() => movePlayerToTable(player.id, otherTableId)}
-                                  >
-                                    →{otherTableId}
-                </button>
-                                ))}
-                              </div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+          {/* Create Table Section */}
+          <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700/30">
+            <h3 className="font-semibold mb-3">Create New Table</h3>
+            <div className="flex items-center gap-3 mb-3">
+              <div>
+                <label className="block text-sm text-gray-400 mb-1">Number of Seats</label>
+                <input 
+                  type="number" 
+                  min="2" 
+                  max="10"
+                  value={newTableMaxSeats}
+                  onChange={(e) => setNewTableMaxSeats(Math.min(10, Math.max(2, parseInt(e.target.value) || 9)))}
+                  className="bg-gray-700 border border-gray-600 rounded w-20 px-2 py-1"
+                />
               </div>
-            )}
+              <button
+                className="mt-6 px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg text-sm font-medium transition-colors flex items-center"
+                onClick={createNewTable}
+              >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                </svg>
+                Add Table
+              </button>
+            </div>
           </div>
-                      );
-                    })}
+          
+          {/* Balance Tables Section */}
+          <div className="bg-gray-800/50 rounded-lg p-4 border border-gray-700/30">
+            <h3 className="font-semibold mb-3">Table Balance & Redraw</h3>
+            <div className="flex flex-wrap gap-3">
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                onClick={autoBalanceTables}
+              >
+                Auto-Balance Tables
+              </motion.button>
+              
+              <motion.button
+                whileHover={{ scale: 1.02 }}
+                whileTap={{ scale: 0.98 }}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+                onClick={completeRedraw}
+              >
+                Complete Redraw
+              </motion.button>
+              
+              {tableWithFewestPlayers && (
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-lg text-sm font-medium transition-colors"
+                  onClick={() => breakTable(tableWithFewestPlayers)}
+                >
+                  Break Table {tableWithFewestPlayers} ({getPlayersAtTable(tableWithFewestPlayers).length} players)
+                </motion.button>
+              )}
+            </div>
           </div>
         </div>
-      )}
-            </motion.div>
-          ))
+      </div>
+      
+      {/* Tables with enhanced visual design */}
+      <div className="space-y-6">
+        {activeTables.length === 0 ? (
+          <div className="bg-gray-800 dark:bg-black/40 rounded-lg p-8 text-center">
+            <div className="text-5xl mb-4 opacity-30">🎮</div>
+            <h3 className="text-xl font-semibold mb-2">No Active Tables</h3>
+            <p className="text-gray-400 mb-4">Add players or create tables to get started</p>
+            <button
+              onClick={createNewTable}
+              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors"
+            >
+              Create First Table
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {activeTables.map(tableId => (
+              <motion.div
+                key={tableId}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3 }}
+                className={`bg-gradient-to-br from-gray-800/80 to-gray-900/80 backdrop-blur-sm rounded-xl shadow-xl overflow-hidden border ${
+                  activeTableId === tableId 
+                    ? 'border-blue-500 ring-2 ring-blue-500/30' 
+                    : 'border-gray-700/50'
+                }`}
+              >
+                <div 
+                  className="p-4 border-b border-gray-700/50 flex justify-between items-center cursor-pointer"
+                  onClick={() => setActiveTableId(activeTableId === tableId ? null : tableId)}
+                >
+                  <div className="flex items-center">
+                    <div className="bg-green-500/20 text-green-500 rounded-full w-8 h-8 flex items-center justify-center mr-3">
+                      {tableId}
+                    </div>
+                    <h3 className="font-bold text-lg">
+                      Table {tableId}
+                      <span className="ml-2 text-sm text-gray-400">
+                        ({getPlayersAtTable(tableId).length} players)
+                      </span>
+                    </h3>
+                  </div>
+                  <div className="flex items-center">
+                    <span className="text-gray-500 mr-2">
+                      {activeTableId === tableId ? 'Hide' : 'Show'}
+                    </span>
+                    <div className={`transform transition-transform ${activeTableId === tableId ? 'rotate-180' : ''}`}>
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 text-gray-500" viewBox="0 0 20 20" fill="currentColor">
+                        <path fillRule="evenodd" d="M5.293 7.293a1 1 0 011.414 0L10 10.586l3.293-3.293a1 1 0 111.414 1.414l-4 4a1 1 0 01-1.414 0l-4-4a1 1 0 010-1.414z" clipRule="evenodd" />
+                      </svg>
+                    </div>
+                  </div>
+                </div>
+                
+                {activeTableId === tableId && (
+                  <div className="p-6">
+                    {/* Visual table representation */}
+                    <div className="relative mb-8 mx-auto p-2">
+                      <div className="w-full h-[300px] bg-emerald-900/30 border-8 border-amber-800/30 rounded-[50%] relative flex items-center justify-center">
+                        <div className="text-sm text-gray-400 font-medium">Table {tableId}</div>
+                        
+                        {/* Seats around the table - using a circular arrangement */}
+                        {Array.from({ length: maxPlayersPerTable }, (_, i) => {
+                          const seatNumber = i + 1;
+                          const player = players.find(
+                            p => p.status === 'active' && p.tableNumber === tableId && p.seatNumber === seatNumber
+                          );
+                          
+                          // Calculate position around the circle
+                          const angle = (2 * Math.PI * i) / maxPlayersPerTable;
+                          const radius = 120; // distance from center
+                          const top = 150 - Math.sin(angle) * radius;
+                          const left = 150 + Math.cos(angle) * radius;
+                          
+                          return (
+                            <div 
+                              key={seatNumber}
+                              style={{
+                                position: 'absolute',
+                                top: `${top}px`,
+                                left: `${left}px`,
+                                transform: 'translate(-50%, -50%)'
+                              }}
+                              className={`w-16 h-16 rounded-full flex flex-col items-center justify-center transition-all ${
+                                player 
+                                  ? 'bg-blue-700 border-2 border-blue-500 shadow-lg' 
+                                  : 'bg-gray-800/60 border border-gray-700'
+                              }`}
+                            >
+                              <div className="text-xs font-bold mb-0.5">Seat {seatNumber}</div>
+                              <div className="text-xs truncate max-w-[56px] text-center">
+                                {player ? player.name.split(' ')[0] : ''}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    
+                    {/* Players list */}
+                    <div className="bg-gray-800/30 rounded-lg p-4 border border-gray-700/30">
+                      <h4 className="font-medium mb-3">Players at Table {tableId}</h4>
+                      <div className="overflow-x-auto">
+                        {getPlayersAtTable(tableId).length > 0 ? (
+                          <table className="w-full text-sm">
+                            <thead>
+                              <tr className="text-gray-400 border-b border-gray-700">
+                                <th className="text-left p-2">Seat</th>
+                                <th className="text-left p-2">Name</th>
+                                <th className="text-left p-2">Chips</th>
+                                <th className="text-left p-2">Actions</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {getPlayersAtTable(tableId)
+                                .sort((a, b) => a.seatNumber - b.seatNumber)
+                                .map(player => (
+                                  <tr key={player.id} className="border-b border-gray-700/50">
+                                    <td className="p-2">{player.seatNumber}</td>
+                                    <td className="p-2 font-medium">{player.name}</td>
+                                    <td className="p-2">{player.chips.toLocaleString()}</td>
+                                    <td className="p-2">
+                                      <div className="flex gap-1">
+                                        {activeTables.filter(id => id !== tableId).map(otherTableId => (
+                                          <button 
+                                            key={otherTableId}
+                                            className="text-xs px-1.5 py-0.5 bg-gray-700 hover:bg-gray-600 rounded transition-colors"
+                                            onClick={() => movePlayerToTable(player.id, otherTableId)}
+                                          >
+                                            Move to {otherTableId}
+                                          </button>
+                                        ))}
+                                      </div>
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        ) : (
+                          <div className="text-center text-gray-500 py-4">
+                            No players at this table
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </motion.div>
+            ))}
+          </div>
         )}
       </div>
     </div>
