@@ -1384,6 +1384,7 @@ function TournamentViewContent({ searchParams }: { searchParams: ReadonlyURLSear
                 maxPlayersPerTable={9}
                 players={players}
                 onPlayersUpdate={handlePlayersUpdate}
+                onDeleteTable={deleteTable}
               />
             </div>
           </div>
@@ -1931,6 +1932,7 @@ function TournamentViewContent({ searchParams }: { searchParams: ReadonlyURLSear
                       maxPlayersPerTable={9}
                       players={players}
                       onPlayersUpdate={handlePlayersUpdate}
+                      onDeleteTable={deleteTable}
                     />
                   </div>
                 </div>
