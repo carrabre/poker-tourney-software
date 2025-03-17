@@ -83,29 +83,29 @@ interface TournamentState {
 // }
 
 // Add back the blindStructure constant after the getEliminatedPositions function
-// This would typically come from an API or state management
-const blindStructure: Blind[] = [
-  { small: 25, big: 50, ante: 0 },
-  { small: 50, big: 100, ante: 0 },
-  { small: 75, big: 150, ante: 0 },
-  { small: 100, big: 200, ante: 25 },
-  { small: 150, big: 300, ante: 25 },
-  { small: 200, big: 400, ante: 50 },
-  { small: 250, big: 500, ante: 50 },
-  { small: 300, big: 600, ante: 75 },
-  { small: 400, big: 800, ante: 100 },
-  { small: 500, big: 1000, ante: 100 },
-  { small: 600, big: 1200, ante: 200 },
-  { small: 800, big: 1600, ante: 200 },
-  { small: 1000, big: 2000, ante: 300 },
-  { small: 1500, big: 3000, ante: 400 },
-  { small: 2000, big: 4000, ante: 500 },
-  { small: 2500, big: 5000, ante: 500 },
-  { small: 3000, big: 6000, ante: 1000 },
-  { small: 4000, big: 8000, ante: 1000 },
-  { small: 5000, big: 10000, ante: 1000 },
-  { small: 6000, big: 12000, ante: 2000 },
-];
+  // This would typically come from an API or state management
+  const blindStructure: Blind[] = [
+    { small: 25, big: 50, ante: 0 },
+    { small: 50, big: 100, ante: 0 },
+    { small: 75, big: 150, ante: 0 },
+    { small: 100, big: 200, ante: 25 },
+    { small: 150, big: 300, ante: 25 },
+    { small: 200, big: 400, ante: 50 },
+    { small: 250, big: 500, ante: 50 },
+    { small: 300, big: 600, ante: 75 },
+    { small: 400, big: 800, ante: 100 },
+    { small: 500, big: 1000, ante: 100 },
+    { small: 600, big: 1200, ante: 200 },
+    { small: 800, big: 1600, ante: 200 },
+    { small: 1000, big: 2000, ante: 300 },
+    { small: 1500, big: 3000, ante: 400 },
+    { small: 2000, big: 4000, ante: 500 },
+    { small: 2500, big: 5000, ante: 500 },
+    { small: 3000, big: 6000, ante: 1000 },
+    { small: 4000, big: 8000, ante: 1000 },
+    { small: 5000, big: 10000, ante: 1000 },
+    { small: 6000, big: 12000, ante: 2000 },
+  ];
 
 // Add a notification type definition
 interface TournamentNotification {
@@ -666,11 +666,11 @@ export default function TournamentView() {
     if (!tournamentState) return; // Guard against null state
     
     let newLevel = direction === 'next' ? tournamentState.currentLevel + 1 : tournamentState.currentLevel - 1;
-    
-    // Ensure the level is within bounds
+      
+      // Ensure the level is within bounds
     newLevel = Math.max(1, Math.min(newLevel, blindLevels.length));
-    
-    // Check if should enter break
+      
+      // Check if should enter break
     const isBreak = tournamentState.nextBreak > 0 && newLevel % tournamentState.nextBreak === 0 && direction === 'next';
     
     // Calculate new level time
@@ -679,12 +679,12 @@ export default function TournamentView() {
     // Create the updated state
     const updatedState = {
       ...tournamentState,
-      currentLevel: newLevel,
+        currentLevel: newLevel,
       blinds: blindLevels[newLevel - 1],
       levelTime: newLevelTime,
       isPaused: true, // Pause when changing levels
-      isBreak
-    };
+        isBreak
+      };
     
     // Update the state
     setTournamentState(updatedState);
@@ -794,7 +794,7 @@ export default function TournamentView() {
       
       // Create the updated state
       const updatedState = {
-        ...prev,
+      ...prev,
         isPaused: newIsPaused
       };
       
@@ -819,7 +819,7 @@ export default function TournamentView() {
     setTournamentState(prev => {
       if (!prev) return null;
       return {
-        ...prev,
+      ...prev,
         announcements: [message, ...(prev.announcements || []).slice(0, 4)] // Keep last 5 announcements
       };
     });
@@ -982,7 +982,7 @@ export default function TournamentView() {
   const renderMainContent = () => {
     // Always show the selected tab content first
     if (activeTab === 'players' || mobileTab === 'players') {
-      return (
+  return (
         <>
           {/* Players Tab */}
           <div className="bg-gray-800 rounded-lg p-6 mb-6">
@@ -1036,7 +1036,7 @@ export default function TournamentView() {
               players={players}
               onPlayersUpdate={handlePlayersUpdate}
             />
-          </div>
+        </div>
           
           {/* Clock Tab (shown below in tables view) */}
           <div className="space-y-6">
@@ -1056,7 +1056,7 @@ export default function TournamentView() {
               onNextLevel={() => handleLevelChange('next')}
               onPrevLevel={() => handleLevelChange('prev')}
             />
-          </div>
+        </div>
         </>
       );
     } else if (activeTab === 'payouts' || mobileTab === 'payouts') {
@@ -1075,8 +1075,8 @@ export default function TournamentView() {
               addOnAmount={tournament?.addOnAmount || 0}
               onPayoutsCalculated={handlePayoutsUpdate}
             />
-          </div>
-          
+      </div>
+      
           {/* Clock Tab (shown below in payouts view) */}
           <div className="space-y-6">
             <TournamentClock 
@@ -1126,12 +1126,12 @@ export default function TournamentView() {
                   </button>
                 </div>
               ) : (
-                <button
+                  <button
                   onClick={() => setIsEditingBlinds(true)}
                   className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg"
-                >
+                  >
                   Edit Blind Structure
-                </button>
+                  </button>
               )}
             </div>
             
@@ -1206,15 +1206,15 @@ export default function TournamentView() {
                   ))}
                 </tbody>
               </table>
-            </div>
-          </div>
+                  </div>
+                  </div>
         </motion.div>
       );
     } else {
       // Default clock view
       return (
-        <div className="space-y-6">
-          <TournamentClock 
+              <div className="space-y-6">
+                <TournamentClock 
             currentLevel={tournamentState?.currentLevel || 1}
             smallBlind={tournamentState?.blinds?.small || 25}
             bigBlind={tournamentState?.blinds?.big || 50}
@@ -1225,118 +1225,118 @@ export default function TournamentView() {
             prizePool={tournamentStats.prizePool}
             payouts={payouts}
             eliminatedPlayers={getEliminatedPositions()}
-            onTimerEnd={handleTimerEnd}
-            onPauseToggle={togglePause}
-            onNextLevel={() => handleLevelChange('next')}
-            onPrevLevel={() => handleLevelChange('prev')}
-          />
-          
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Tournament Stats */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <h2 className="text-lg font-bold mb-4">Tournament Statistics</h2>
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <div>
-                  <div className="text-gray-400">Entrants</div>
+                  onTimerEnd={handleTimerEnd}
+                  onPauseToggle={togglePause}
+                  onNextLevel={() => handleLevelChange('next')}
+                  onPrevLevel={() => handleLevelChange('prev')}
+                />
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                  {/* Tournament Stats */}
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <h2 className="text-lg font-bold mb-4">Tournament Statistics</h2>
+                    <div className="grid grid-cols-2 gap-4 text-sm">
+                      <div>
+                        <div className="text-gray-400">Entrants</div>
                   <div className="text-xl font-bold">{tournamentStats.entrants}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Remaining</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Remaining</div>
                   <div className="text-xl font-bold">{tournamentStats.remainingPlayers}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Average Stack</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Average Stack</div>
                   <div className="text-xl font-bold">
                     {tournamentStats.averageStack > 0 ? tournamentStats.averageStack.toLocaleString() : "-"}
                   </div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Tables</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Tables</div>
                   <div className="text-xl font-bold">{tournamentStats.tablesRemaining}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Prize Pool</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Prize Pool</div>
                   <div className="text-xl font-bold">${tournamentStats.prizePool.toLocaleString()}</div>
-                </div>
-                <div>
-                  <div className="text-gray-400">Paying Places</div>
+                      </div>
+                      <div>
+                        <div className="text-gray-400">Paying Places</div>
                   <div className="text-xl font-bold">{tournamentStats.payingPlaces}</div>
-                </div>
-              </div>
-            </div>
-            
-            {/* Announcements */}
-            <div className="bg-gray-800 rounded-lg p-6">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold">Announcements</h2>
-                <button 
-                  className="text-xs bg-emerald-600 hover:bg-emerald-700 px-2 py-1 rounded"
-                  onClick={() => addAnnouncement("New announcement " + new Date().toLocaleTimeString())}
-                >
-                  Add Announcement
-                </button>
-              </div>
-              <ul className="space-y-2 max-h-40 overflow-y-auto">
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {/* Announcements */}
+                  <div className="bg-gray-800 rounded-lg p-6">
+                    <div className="flex justify-between items-center mb-4">
+                      <h2 className="text-lg font-bold">Announcements</h2>
+                      <button 
+                        className="text-xs bg-emerald-600 hover:bg-emerald-700 px-2 py-1 rounded"
+                        onClick={() => addAnnouncement("New announcement " + new Date().toLocaleTimeString())}
+                      >
+                        Add Announcement
+                      </button>
+                    </div>
+                    <ul className="space-y-2 max-h-40 overflow-y-auto">
                 {tournamentState?.announcements.map((announcement, i) => (
-                  <li 
-                    key={i} 
-                    className="text-sm p-2 rounded bg-gray-700 border-l-2 border-emerald-500"
-                  >
-                    {announcement}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-          
-          {/* Blind Structure Preview */}
-          <div className="bg-gray-800 rounded-lg p-6">
-            <h2 className="text-lg font-bold mb-4">Upcoming Levels</h2>
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b border-gray-700">
-                    <th className="text-left p-2">Level</th>
-                    <th className="text-left p-2">Small Blind</th>
-                    <th className="text-left p-2">Big Blind</th>
-                    <th className="text-left p-2">Ante</th>
-                    <th className="text-left p-2 hidden md:table-cell">SB/BB Ratio</th>
-                    <th className="text-left p-2 hidden md:table-cell">BB/Starting Stack</th>
-                  </tr>
-                </thead>
-                <tbody>
+                        <li 
+                          key={i} 
+                          className="text-sm p-2 rounded bg-gray-700 border-l-2 border-emerald-500"
+                        >
+                          {announcement}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                </div>
+                
+                {/* Blind Structure Preview */}
+                <div className="bg-gray-800 rounded-lg p-6">
+                  <h2 className="text-lg font-bold mb-4">Upcoming Levels</h2>
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm">
+                      <thead>
+                        <tr className="border-b border-gray-700">
+                          <th className="text-left p-2">Level</th>
+                          <th className="text-left p-2">Small Blind</th>
+                          <th className="text-left p-2">Big Blind</th>
+                          <th className="text-left p-2">Ante</th>
+                          <th className="text-left p-2 hidden md:table-cell">SB/BB Ratio</th>
+                          <th className="text-left p-2 hidden md:table-cell">BB/Starting Stack</th>
+                        </tr>
+                      </thead>
+                      <tbody>
                   {blindStructure.slice(
                     Math.max(0, (tournamentState?.currentLevel || 1) - 1), 
                     Math.min(blindStructure.length, (tournamentState?.currentLevel || 1) + 5)
                   ).map((level, i) => {
                     const levelNumber = (tournamentState?.currentLevel || 1) + i;
-                    const isCurrentLevel = i === 0;
-                    
-                    return (
-                      <tr 
-                        key={i} 
-                        className={`border-b border-gray-700 ${isCurrentLevel ? 'bg-emerald-900 bg-opacity-20' : ''}`}
-                      >
-                        <td className="p-2 font-medium">
-                          {isCurrentLevel ? '→ ' : ''}{levelNumber}
+                          const isCurrentLevel = i === 0;
+                          
+                          return (
+                            <tr 
+                              key={i} 
+                              className={`border-b border-gray-700 ${isCurrentLevel ? 'bg-emerald-900 bg-opacity-20' : ''}`}
+                            >
+                              <td className="p-2 font-medium">
+                                {isCurrentLevel ? '→ ' : ''}{levelNumber}
                           {levelNumber % (tournamentState?.nextBreak || 999) === 0 ? ' (Break)' : ''}
-                        </td>
-                        <td className="p-2">{level.small}</td>
-                        <td className="p-2">{level.big}</td>
-                        <td className="p-2">{level.ante || '-'}</td>
-                        <td className="p-2 hidden md:table-cell">1:
-                          {Math.round((level.big/level.small) * 10) / 10}
-                        </td>
-                        <td className="p-2 hidden md:table-cell">1:
+                              </td>
+                              <td className="p-2">{level.small}</td>
+                              <td className="p-2">{level.big}</td>
+                              <td className="p-2">{level.ante || '-'}</td>
+                              <td className="p-2 hidden md:table-cell">1:
+                                {Math.round((level.big/level.small) * 10) / 10}
+                              </td>
+                              <td className="p-2 hidden md:table-cell">1:
                           {Math.round((tournament?.startingChips || 10000) / level.big)}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
         </div>
       );
     }
@@ -1393,8 +1393,8 @@ export default function TournamentView() {
                     </button>
                   </div>
                   {debugInfo}
-                </div>
-              )}
+              </div>
+            )}
             </div>
           </div>
         </div>
@@ -1496,11 +1496,11 @@ export default function TournamentView() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-              <PlayerManager 
+                <PlayerManager 
                 tournamentId={tournament?.id || ''}
                 buyIn={tournament?.buyIn || 0}
                 startingChips={tournament?.startingChips || 0}
-                allowRebuys={true}
+                  allowRebuys={true}
                 allowAddOns={tournament?.allowAddOns || false}
                 rebuyAmount={tournament?.rebuyAmount || 0}
                 rebuyChips={tournament?.rebuyChips || 0}
@@ -1522,8 +1522,8 @@ export default function TournamentView() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-              <TableManager 
-                maxPlayersPerTable={9}
+                <TableManager 
+                  maxPlayersPerTable={9}
                 players={players}
                 onPlayersUpdate={handlePlayersUpdate}
               />
@@ -1538,7 +1538,7 @@ export default function TournamentView() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-              <PayoutCalculator 
+                <PayoutCalculator 
                 entrants={tournamentStats.entrants}
                 buyIn={tournament?.buyIn || 0}
                 fees={tournament?.entryFee || 0}
@@ -1546,8 +1546,8 @@ export default function TournamentView() {
                 rebuyAmount={tournament?.rebuyAmount || 0}
                 addOns={tournamentStats.totalAddOns}
                 addOnAmount={tournament?.addOnAmount || 0}
-                onPayoutsCalculated={handlePayoutsUpdate}
-              />
+                  onPayoutsCalculated={handlePayoutsUpdate}
+                />
             </motion.div>
           )}
           
@@ -1576,7 +1576,7 @@ export default function TournamentView() {
                       >
                         Save Changes
                       </button>
-                    </div>
+              </div>
                   ) : (
                     <button
                       onClick={() => setIsEditingBlinds(true)}
@@ -1584,8 +1584,8 @@ export default function TournamentView() {
                     >
                       Edit Blind Structure
                     </button>
-                  )}
-                </div>
+            )}
+          </div>
                 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
@@ -1658,8 +1658,8 @@ export default function TournamentView() {
                       ))}
                     </tbody>
                   </table>
-                </div>
-              </div>
+        </div>
+      </div>
             </motion.div>
           )}
         </AnimatePresence>

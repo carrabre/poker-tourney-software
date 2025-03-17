@@ -521,8 +521,8 @@ const TableManager: React.FC<TableManagerProps> = ({
                 <span className="text-gray-500">
                   {activeTableId === tableId ? '↑ Collapse' : '↓ Expand'}
                 </span>
-              </div>
-              
+            </div>
+            
               {activeTableId === tableId && (
                 <div className="p-4">
                   <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -530,10 +530,10 @@ const TableManager: React.FC<TableManagerProps> = ({
                       const seatNumber = i + 1;
                       const player = players.find(
                         p => p.status === 'active' && p.tableNumber === tableId && p.seatNumber === seatNumber
-                      );
-                      
-                      return (
-                        <div 
+                );
+                
+                return (
+                  <div 
                           key={seatNumber}
                           className={`border rounded-lg p-3 ${
                             player 
@@ -546,31 +546,31 @@ const TableManager: React.FC<TableManagerProps> = ({
                           </div>
                           <div className="font-medium">
                             {player ? player.name : 'Empty'}
-                          </div>
+                  </div>
                           {player && (
                             <div className="flex justify-between mt-2 text-sm">
                               <div className="text-gray-500 dark:text-gray-400">
                                 {player.chips.toLocaleString()} chips
-                              </div>
+            </div>
                               <div className="flex gap-1">
                                 {activeTables.filter(id => id !== tableId).map(otherTableId => (
-                                  <button
+                <button 
                                     key={otherTableId}
                                     className="text-xs px-1.5 py-0.5 bg-gray-200 dark:bg-gray-700 hover:bg-gray-300 dark:hover:bg-gray-600 rounded"
                                     onClick={() => movePlayerToTable(player.id, otherTableId)}
                                   >
                                     →{otherTableId}
-                                  </button>
+                </button>
                                 ))}
                               </div>
-                            </div>
-                          )}
-                        </div>
+              </div>
+            )}
+          </div>
                       );
                     })}
-                  </div>
-                </div>
-              )}
+          </div>
+        </div>
+      )}
             </motion.div>
           ))
         )}
