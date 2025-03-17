@@ -15,12 +15,14 @@ interface TableManagerProps {
   players: Player[];
   maxPlayersPerTable: number;
   onPlayersUpdate: (updatedPlayers: Player[]) => void;
+  onDeleteTable?: (tableNumber: number) => void;
 }
 
 const TableManager: React.FC<TableManagerProps> = ({
   players,
   maxPlayersPerTable = 9,
   onPlayersUpdate,
+  onDeleteTable
 }) => {
   const [tables, setTables] = useState<Table[]>([]);
   const [selectedTable, setSelectedTable] = useState<number | null>(null);

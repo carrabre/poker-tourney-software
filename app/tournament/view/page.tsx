@@ -1221,6 +1221,92 @@ function TournamentViewContent({ searchParams }: { searchParams: ReadonlyURLSear
     }
   };
 
+  // Add a delete table function that removes a table and updates all storage
+  const deleteTable = (tableId: number) => {
+    if (!tournamentState) return;
+    
+    console.log(`Deleting table #${tableId} from tournament ${tournamentId}`);
+    
+    // Check if there are players at this table
+    const playersAtTable = players.filter(p => p.tableNumber === tableId);
+    if (playersAtTable.length > 0) {
+      // Add warning notification
+      setNotifications(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          message: `Cannot delete table ${tableId} - ${playersAtTable.length} players are still seated at this table`,
+          type: 'warning',
+          time: new Date().toISOString(),
+          read: false
+        }
+      ]);
+      return;
+    }
+    
+    // 1. Update the tournamentState tables
+    const updatedState = {
+      ...tournamentState,
+      tables: (tournamentState.tables || []).filter(table => table.tableNumber !== tableId)
+    };
+    setTournamentState(updatedState);
+    
+    // 2. Update the tables state array
+    const updatedTables = tables.filter(table => table.id !== tableId);
+    setTables(updatedTables);
+    
+    // Save to all storage methods to ensure maximum persistence
+    try {
+      // 1. Save to tournamentState in localStorage
+      localStorage.setItem(`tournament_state_${tournamentId}`, JSON.stringify(updatedState));
+      console.log(`✅ Removed table #${tableId} from tournament_state_${tournamentId}`);
+      
+      // 2. Save to dedicated tables storage with proper key
+      const savedToTablesStorage = saveTables(tournamentId, updatedTables);
+      console.log(`✅ Updated tables storage after deletion: ${savedToTablesStorage ? 'Success' : 'Failed'}`);
+      
+      // 3. Save complete tournament state
+      const savedComplete = saveCompleteTournamentState(tournamentId, updatedState, players, updatedTables);
+      console.log(`✅ Updated complete tournament state after deletion: ${savedComplete ? 'Success' : 'Failed'}`);
+      
+      // 4. As a backup, also save with a generic key
+      localStorage.setItem('tables', JSON.stringify(updatedTables));
+      
+      // Verify tables were saved correctly
+      setTimeout(() => {
+        const storedTables = getTables(tournamentId);
+        console.log(`⚠️ Verification: ${storedTables.length} tables found in storage after deletion`);
+        console.log(`⚠️ Table #${tableId} removed from storage: ${!storedTables.some(t => t.id === tableId)}`);
+      }, 100);
+      
+      // Add confirmation notification
+      setNotifications(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          message: `Table ${tableId} has been deleted`,
+          type: 'success',
+          time: new Date().toISOString(),
+          read: false
+        }
+      ]);
+    } catch (error) {
+      console.error('Failed to delete table from localStorage:', error);
+      
+      // Add error notification
+      setNotifications(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          message: 'Failed to delete table: ' + (error instanceof Error ? error.message : 'Unknown error'),
+          type: 'error',
+          time: new Date().toISOString(),
+          read: false
+        }
+      ]);
+    }
+  };
+
   // Determine which content to show first
   const renderMainContent = () => {
     // Always show the selected tab content first

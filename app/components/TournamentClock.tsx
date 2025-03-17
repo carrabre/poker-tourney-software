@@ -397,7 +397,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
     const displayPayouts = getDisplayPayouts();
     
     return (
-      <div className="fixed inset-0 bg-gray-950 flex flex-col justify-center items-center z-50 tournament-clock">
+      <div className="fixed inset-0 bg-gray-950 flex flex-col justify-center items-center z-40 tournament-clock">
         <div className="absolute top-6 right-6 flex space-x-3">
           <button 
             className="bg-gray-800 hover:bg-gray-700 rounded-full p-3 text-gray-300 transition-all duration-300 transform hover:scale-110 shadow-lg"
@@ -535,6 +535,12 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
               <span className="bg-gray-800 px-3 py-1.5 rounded-md transition-all hover:bg-gray-700">→: Next Level</span>
             </div>
           </div>
+        </div>
+        
+        {/* Powered by badge */}
+        <div className="absolute bottom-4 right-4 text-xs text-gray-500 opacity-70 hover:opacity-100 transition-opacity duration-300 flex items-center">
+          <span className="mr-1 hidden md:inline">Powered by</span>
+          <span className="font-bold">ETH.cash</span>
         </div>
       </div>
     );
