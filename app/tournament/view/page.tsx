@@ -11,7 +11,17 @@ import { Player, Blind, TableConfig, Payout } from '@/app/types';
 import supabase from '@/app/utils/supabase';
 import { useSearchParams } from 'next/navigation';
 import Footer from '@/app/components/Footer';
-import { getTournamentState, getPlayers, getBlindStructure, getTournamentById, saveCompleteTournamentState, saveTournamentState, getTables } from '@/app/utils/localStorage';
+import Notifications from '@/app/components/Notifications';
+import { 
+  getTournamentState, 
+  getPlayers, 
+  getBlindStructure as getStoredBlindStructure, 
+  getTournamentById, 
+  saveCompleteTournamentState, 
+  saveTournamentState, 
+  getTables,
+  saveBlindStructure as saveStoredBlindStructure
+} from '@/app/utils/localStorage';
 
 // Add this new interface for tournaments
 interface Tournament {
@@ -97,6 +107,15 @@ const blindStructure: Blind[] = [
   { small: 6000, big: 12000, ante: 2000 },
 ];
 
+// Add a notification type definition
+interface TournamentNotification {
+  id: string;
+  message: string;
+  type: 'info' | 'success' | 'warning' | 'error';
+  time: string;
+  read: boolean;
+}
+
 /**
  * Generates default tournament payouts based on the number of players and prize pool
  * @param places Number of places to pay
@@ -181,6 +200,7 @@ export default function TournamentView() {
   const [editableBlinds, setEditableBlinds] = useState<Blind[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
   const [isFullScreen, setIsFullScreen] = useState(false);
+  const [autoSaveInterval, setAutoSaveInterval] = useState<NodeJS.Timeout | null>(null);
   
   // Used for mobile view tab selection
   const [mobileTab, setMobileTab] = useState('clock');
@@ -193,6 +213,16 @@ export default function TournamentView() {
   
   // Add this state definition after the other state variables
   const [blindStructureState, setBlindStructureState] = useState<Blind[]>([]);
+  
+  // Add state for notifications
+  const [notifications, setNotifications] = useState<TournamentNotification[]>([]);
+  
+  // Add state for auto-save throttling
+  const [lastSaveTime, setLastSaveTime] = useState<number>(Date.now());
+  const AUTO_SAVE_THROTTLE = 5000; // Only save every 5 seconds at most
+  
+  // Add a debug state
+  const [debugInfo, setDebugInfo] = useState<string>('');
   
   // Setup a demo tournament for demonstration purposes
   const setupDemoTournament = () => {
@@ -281,6 +311,8 @@ export default function TournamentView() {
           return;
         }
         
+        console.log('Loading tournament data for ID:', tournamentId);
+        
         // First try to get the tournament state from localStorage (for more complete data)
         const savedState = getTournamentState(tournamentId);
         
@@ -309,15 +341,18 @@ export default function TournamentView() {
           if (!savedState.players) {
             const savedPlayers = getPlayers(tournamentId);
             if (savedPlayers && savedPlayers.length > 0) {
+              console.log('Loaded players from localStorage:', savedPlayers.length, 'players');
               setPlayers(savedPlayers);
             }
           } else {
+            console.log('Players found in state:', savedState.players.length, 'players');
             setPlayers(savedState.players);
           }
           
           // Load blind structure if available
-          const savedBlinds = getBlindStructure(tournamentId);
+          const savedBlinds = getStoredBlindStructure(tournamentId);
           if (savedBlinds && savedBlinds.length > 0) {
+            console.log('Loaded blind structure from localStorage:', savedBlinds.length, 'levels');
             setBlindLevels(savedBlinds);
             setEditableBlinds(savedBlinds);
           }
@@ -325,11 +360,13 @@ export default function TournamentView() {
           // Load tables if available
           const savedTables = getTables(tournamentId);
           if (savedTables && savedTables.length > 0) {
+            console.log('Loaded tables from localStorage:', savedTables.length, 'tables');
             setTables(savedTables);
           }
           
           // Set payouts if available
           if (savedState.payouts && savedState.payouts.length > 0) {
+            console.log('Loaded payouts from state:', savedState.payouts.length, 'positions');
             setPayouts(savedState.payouts);
           }
         } 
@@ -361,12 +398,14 @@ export default function TournamentView() {
             // Get players if any
             const savedPlayers = getPlayers(tournamentId);
             if (savedPlayers && savedPlayers.length > 0) {
+              console.log('Loaded players from localStorage:', savedPlayers.length, 'players');
               setPlayers(savedPlayers);
             }
             
             // Load blind structure if available
-            const savedBlinds = getBlindStructure(tournamentId);
+            const savedBlinds = getStoredBlindStructure(tournamentId);
             if (savedBlinds && savedBlinds.length > 0) {
+              console.log('Loaded blind structure from localStorage:', savedBlinds.length, 'levels');
               setBlindLevels(savedBlinds);
               setEditableBlinds(savedBlinds);
             }
@@ -374,6 +413,7 @@ export default function TournamentView() {
             // Load tables if available
             const savedTables = getTables(tournamentId);
             if (savedTables && savedTables.length > 0) {
+              console.log('Loaded tables from localStorage:', savedTables.length, 'tables');
               setTables(savedTables);
             }
           } else {
@@ -392,17 +432,84 @@ export default function TournamentView() {
     fetchTournament();
   }, [tournamentId, isDemoTournament]);
   
-  // Save tournament state to localStorage whenever important data changes
+  // Replace the auto-save effect with a throttled version
+  useEffect(() => {
+    // Clear any existing interval
+    if (autoSaveInterval) {
+      clearInterval(autoSaveInterval);
+    }
+    
+    // Set up a new interval for auto-saving (every 10 seconds)
+    const intervalId = setInterval(() => {
+      if (tournamentState && tournamentId !== 'demo') {
+        const now = Date.now();
+        // Throttle saves to prevent excessive updates
+        if (now - lastSaveTime >= AUTO_SAVE_THROTTLE) {
+          console.log('Auto-saving tournament state and data...');
+          saveTournamentState(tournamentId, tournamentState);
+          
+          // Only save complete state when necessary and throttle it
+          if (players.length > 0 || tables.length > 0) {
+            saveCompleteTournamentState(tournamentId, tournamentState, players, tables);
+          }
+          
+          setLastSaveTime(now);
+        }
+      }
+    }, 10000); // Check every 10 seconds
+    
+    setAutoSaveInterval(intervalId);
+    
+    // Cleanup function to clear the interval when component unmounts
+    return () => {
+      if (intervalId) {
+        clearInterval(intervalId);
+      }
+    };
+  }, [tournamentId, tournamentState, players, tables, lastSaveTime]);
+
+  // Modify the tournament state update effect to be throttled too
   useEffect(() => {
     if (tournamentState && tournamentId !== 'demo') {
-      saveTournamentState(tournamentId, tournamentState);
-      
-      // Also save complete state periodically for better synchronization
-      if (players.length > 0 || tables.length > 0) {
-        saveCompleteTournamentState(tournamentId, tournamentState, players, tables);
+      const now = Date.now();
+      if (now - lastSaveTime >= AUTO_SAVE_THROTTLE) {
+        console.log('Saving tournament state to localStorage on state change...');
+        saveTournamentState(tournamentId, tournamentState);
+        
+        // Update last save time
+        setLastSaveTime(now);
       }
     }
-  }, [tournamentState, players, tables, tournamentId]);
+  }, [tournamentState, tournamentId, lastSaveTime]);
+
+  // Also throttle the beforeunload handler
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (tournamentState && tournamentId !== 'demo') {
+        console.log('Saving state before page unload');
+        
+        // Strip out unnecessary data
+        const essentialState = {
+          ...tournamentState,
+          // Don't include announcements in the save to reduce size
+          announcements: tournamentState.announcements.slice(0, 5)
+        };
+        
+        saveTournamentState(tournamentId, essentialState);
+        
+        // Only save complete state if we have players
+        if (players.length > 0) {
+          saveCompleteTournamentState(tournamentId, essentialState, players, tables);
+        }
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [tournamentId, tournamentState, players, tables]);
 
   // Add this useEffect to initialize blindStructureState from blindStructure
   useEffect(() => {
@@ -433,9 +540,10 @@ export default function TournamentView() {
     ).size;
     
     // Update payouts based on new player count if needed
-    if (normalizedPlayers.length > 0 && payouts.length === 0 && tournament?.buyIn) {
+    if (normalizedPlayers.length > 0 && payouts.length === 0) {
       const newPayingPlaces = Math.max(1, Math.ceil(normalizedPlayers.length * 0.12));
-      const totalPrizePool = normalizedPlayers.length * tournament.buyIn;
+      const buyInAmount = tournament?.buyIn ?? 0;
+      const totalPrizePool = normalizedPlayers.length * buyInAmount;
       
       // Generate default payouts
       const defaultPayouts = generateDefaultPayouts(newPayingPlaces, totalPrizePool);
@@ -539,7 +647,8 @@ export default function TournamentView() {
     // Update payouts based on new player count if needed
     if (normalizedPlayers.length > 0 && payouts.length === 0) {
       const newPayingPlaces = Math.max(1, Math.ceil(normalizedPlayers.length * 0.12));
-      const totalPrizePool = normalizedPlayers.length * tournament?.buyIn || 0;
+      const buyInAmount = tournament?.buyIn ?? 0;
+      const totalPrizePool = normalizedPlayers.length * buyInAmount;
       
       // Generate default payouts
       const defaultPayouts = generateDefaultPayouts(newPayingPlaces, totalPrizePool);
@@ -556,86 +665,123 @@ export default function TournamentView() {
   const handleLevelChange = (direction: 'next' | 'prev') => {
     if (!tournamentState) return; // Guard against null state
     
-    setTournamentState(prev => {
-      if (!prev) return prev; // Guard against null
-      
-      let newLevel = direction === 'next' ? prev.currentLevel + 1 : prev.currentLevel - 1;
-      
-      // Ensure the level is within bounds
-      newLevel = Math.max(1, Math.min(newLevel, blindStructure.length));
-      
-      // Check if should enter break
-      const isBreak = prev.nextBreak > 0 && newLevel % prev.nextBreak === 0 && direction === 'next';
-      
-      return {
-        ...prev,
-        currentLevel: newLevel,
-        blinds: blindStructure[newLevel - 1],
-        levelTime: isBreak ? prev.breakLength * 60 : 20 * 60, // Reset timer to level duration or break duration
-        isPaused: true, // Pause when changing levels
-        isBreak
-      };
-    });
-
+    let newLevel = direction === 'next' ? tournamentState.currentLevel + 1 : tournamentState.currentLevel - 1;
+    
+    // Ensure the level is within bounds
+    newLevel = Math.max(1, Math.min(newLevel, blindLevels.length));
+    
+    // Check if should enter break
+    const isBreak = tournamentState.nextBreak > 0 && newLevel % tournamentState.nextBreak === 0 && direction === 'next';
+    
+    // Calculate new level time
+    const newLevelTime = isBreak ? tournamentState.breakLength * 60 : 20 * 60; // Break length or standard level time
+    
+    // Create the updated state
+    const updatedState = {
+      ...tournamentState,
+      currentLevel: newLevel,
+      blinds: blindLevels[newLevel - 1],
+      levelTime: newLevelTime,
+      isPaused: true, // Pause when changing levels
+      isBreak
+    };
+    
+    // Update the state
+    setTournamentState(updatedState);
+    
     // Announce level change
-    const newLevel = direction === 'next' ? tournamentState?.currentLevel + 1 : tournamentState?.currentLevel - 1;
-    if (newLevel > 0 && newLevel <= blindStructure.length) {
-      const blindInfo = blindStructure[newLevel - 1];
-      const isBreak = newLevel % tournamentState?.nextBreak === 0 && direction === 'next';
+    if (newLevel > 0 && newLevel <= blindLevels.length) {
+      const blindInfo = blindLevels[newLevel - 1];
       
       if (isBreak) {
-        addAnnouncement(`Break time! We'll resume in ${tournamentState?.breakLength} minutes.`);
+        addAnnouncement(`Break time! We'll resume in ${tournamentState.breakLength} minutes.`);
       } else {
         const anteText = blindInfo.ante ? ` with ${blindInfo.ante} ante` : '';
         addAnnouncement(`Moving to Level ${newLevel}: ${blindInfo.small}/${blindInfo.big}${anteText}`);
       }
     }
     
-    // Save state after level change
-    setTimeout(() => {
-      saveTournamentState(tournamentId, tournamentState);
-    }, 100);
+    // Immediately save state to localStorage
+    if (tournamentId !== 'demo') {
+      console.log('Saving tournament state after level change');
+      saveTournamentState(tournamentId, updatedState);
+      
+      if (players.length > 0) {
+        saveCompleteTournamentState(tournamentId, updatedState, players, tables);
+      }
+    }
   };
   
   // Handle timer end
   const handleTimerEnd = () => {
     if (!tournamentState) return;
     
+    console.log('Timer ended');
+    
+    // Create updated state
+    let updatedState;
+    
     if (tournamentState.isBreak) {
-      // End the break and move to the next level
-      if (tournamentState) {
-        setTournamentState(prev => {
-          if (!prev) return null;
-          return {
-            ...prev,
-            isBreak: false,
-            levelTime: 20 * 60, // Reset to standard level time
-            isPaused: true
-          };
-        });
-        
-        addAnnouncement("Break has ended. Starting next level.");
-      }
+      // End the break and resume normal play
+      updatedState = {
+        ...tournamentState,
+        isBreak: false,
+        levelTime: 20 * 60, // Reset to standard level time
+        isPaused: true, // Pause when break ends
+      };
+      
+      addAnnouncement("Break has ended. Starting next level.");
     } else {
-      // Auto-advance to next level
-      handleLevelChange('next');
+      // Move to next level and update all relevant state
+      const newLevel = tournamentState.currentLevel + 1;
+      
+      // Ensure the level is within bounds
+      const boundedNewLevel = Math.min(newLevel, blindLevels.length);
+      
+      // Check if should enter break
+      const isBreak = tournamentState.nextBreak > 0 && boundedNewLevel % tournamentState.nextBreak === 0;
+      
+      updatedState = {
+        ...tournamentState,
+        currentLevel: boundedNewLevel,
+        blinds: blindLevels[boundedNewLevel - 1],
+        levelTime: isBreak ? tournamentState.breakLength * 60 : 20 * 60,
+        isPaused: true, // Pause when level changes
+        isBreak
+      };
+      
+      // Announce the change
+      if (isBreak) {
+        addAnnouncement(`Break time! We'll resume in ${tournamentState.breakLength} minutes.`);
+      } else {
+        const blindInfo = blindLevels[boundedNewLevel - 1];
+        const anteText = blindInfo.ante ? ` with ${blindInfo.ante} ante` : '';
+        addAnnouncement(`Moving to Level ${boundedNewLevel}: ${blindInfo.small}/${blindInfo.big}${anteText}`);
+      }
     }
     
-    // Save state
-    setTimeout(() => {
-      if (tournamentState && tournamentId !== 'demo') {
-        saveTournamentState(tournamentId, tournamentState);
+    // Update the state
+    setTournamentState(updatedState);
+    
+    // Immediately save state to localStorage
+    if (tournamentId !== 'demo') {
+      console.log('Saving tournament state after timer end');
+      saveTournamentState(tournamentId, updatedState);
+      
+      if (players.length > 0) {
+        saveCompleteTournamentState(tournamentId, updatedState, players, tables);
       }
-    }, 100);
+    }
   };
   
   // Toggle pause state
   const togglePause = () => {
     if (!tournamentState) return;
     
+    const newIsPaused = !tournamentState.isPaused;
+    
     setTournamentState(prev => {
       if (!prev) return null;
-      const newIsPaused = !prev.isPaused;
       
       // Add announcement when tournament starts or pauses
       if (newIsPaused) {
@@ -646,24 +792,30 @@ export default function TournamentView() {
         addAnnouncement("Tournament clock resumed");
       }
       
-      return {
+      // Create the updated state
+      const updatedState = {
         ...prev,
         isPaused: newIsPaused
       };
-    });
-    
-    // Save state
-    setTimeout(() => {
-      if (tournamentState && tournamentId !== 'demo') {
-        saveTournamentState(tournamentId, tournamentState);
+      
+      // Immediately save to localStorage for better persistence
+      if (tournamentId !== 'demo') {
+        console.log('Immediately saving pause state change');
+        saveTournamentState(tournamentId, updatedState);
       }
-    }, 100);
+      
+      return updatedState;
+    });
   };
   
-  // Add an announcement
+  // Modify the addAnnouncement function to also create a notification
   const addAnnouncement = (message: string) => {
     if (!tournamentState) return;
     
+    // Create timestamp for the announcement
+    const time = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    
+    // Update tournament state with the announcement
     setTournamentState(prev => {
       if (!prev) return null;
       return {
@@ -671,36 +823,39 @@ export default function TournamentView() {
         announcements: [message, ...(prev.announcements || []).slice(0, 4)] // Keep last 5 announcements
       };
     });
+    
+    // Create a notification from the announcement
+    const notificationId = `notif-${Date.now()}`;
+    setNotifications(prev => [
+      {
+        id: notificationId,
+        message,
+        type: 'info',
+        time,
+        read: false
+      },
+      ...prev
+    ]);
+  };
+  
+  // Add notification handlers
+  const dismissNotification = (id: string) => {
+    setNotifications(prev => prev.filter(notification => notification.id !== id));
+  };
+  
+  const dismissAllNotifications = () => {
+    setNotifications([]);
+  };
+  
+  const markNotificationAsRead = (id: string) => {
+    setNotifications(prev => prev.map(notification => 
+      notification.id === id ? { ...notification, read: true } : notification
+    ));
   };
   
   // Handle payouts update
   const handlePayoutsUpdate = (payouts: Payout[]) => {
     setPayouts(payouts);
-  };
-
-  // Add this function to handle saving the edited blind structure
-  const saveBlindStructure = () => {
-    // Here you would typically save to a database or localStorage
-    // For now, we'll just update the current structure
-    setIsEditingBlinds(false);
-    
-    // Update any related state or perform additional actions
-    // For example, update tournament.blinds with the currently active level
-    const currentLevelBlind = blindLevels[tournamentState?.currentLevel - 1];
-    if (currentLevelBlind) {
-      setTournamentState(prev => ({
-        ...prev,
-        blinds: currentLevelBlind
-      }));
-    }
-    
-    // Announce the update
-    addAnnouncement("Blind structure has been updated");
-    
-    // Save state
-    setTimeout(() => {
-      saveTournamentState(tournamentId, tournamentState);
-    }, 100);
   };
 
   // Add this function to handle blind level updates
@@ -712,6 +867,104 @@ export default function TournamentView() {
     };
     setBlindLevels(newStructure);
   };
+
+  // Update the saveBlindStructure function to save properly to localStorage
+  const saveBlindStructureHandler = () => {
+    if (!tournamentState || tournamentId === 'demo') return;
+    
+    // Save the edited blind structure to localStorage
+    if (blindLevels.length > 0) {
+      console.log('Saving blind structure to localStorage');
+      // Use the imported function from localStorage.ts
+      saveStoredBlindStructure(tournamentId, blindLevels); 
+      
+      // Only change the editing state if we have blinds to save
+      setIsEditingBlinds(false);
+    }
+    
+    // Update current blind level
+    const currentLevelIndex = (tournamentState.currentLevel || 1) - 1;
+    if (currentLevelIndex >= 0 && currentLevelIndex < blindLevels.length) {
+      const currentLevelBlind = blindLevels[currentLevelIndex];
+      if (currentLevelBlind) {
+        setTournamentState(prev => {
+          if (!prev) return null;
+          return {
+            ...prev,
+            blinds: currentLevelBlind
+          };
+        });
+      }
+    }
+    
+    // Announce the update
+    addAnnouncement("Blind structure has been updated");
+  };
+
+  // Utility function to ensure state gets saved
+  const forceSaveState = useCallback(() => {
+    if (!tournamentState || tournamentId === 'demo') return;
+    
+    try {
+      console.log('Force saving tournament state');
+      
+      // Strip out unnecessary data and deep clone to ensure no circular references
+      const essentialState = JSON.parse(JSON.stringify({
+        ...tournamentState,
+        // Don't include announcements in the save to reduce size
+        announcements: tournamentState.announcements.slice(0, 5)
+      }));
+      
+      // Set debug info
+      setDebugInfo(`Saving at ${new Date().toLocaleTimeString()}: ${players.length} players, ${tables.length} tables`);
+      
+      // Clean the players data before saving
+      // Using type assertion to handle the null vs undefined type mismatch
+      const cleanPlayers = players.map(player => ({
+        ...player,
+        // Convert undefined to undefined (not null) to match Player type
+        finishPosition: player.finishPosition,
+        rebuys: player.rebuys || 0,
+        addOns: player.addOns || 0
+      })) as Player[];
+      
+      // First try to save tournament state
+      const stateSaved = saveTournamentState(tournamentId, essentialState);
+      
+      // Then try to save complete state
+      if (players.length > 0 || tables.length > 0) {
+        const completeSaved = saveCompleteTournamentState(tournamentId, essentialState, cleanPlayers, tables);
+        
+        setDebugInfo(prev => `${prev}\nState save: ${stateSaved ? 'Success' : 'Failed'}, Complete save: ${completeSaved ? 'Success' : 'Failed'}`);
+      } else {
+        setDebugInfo(prev => `${prev}\nState save: ${stateSaved ? 'Success' : 'Failed'}, No players/tables to save`);
+      }
+      
+      // Update last save time
+      setLastSaveTime(Date.now());
+      
+      // Add notification
+      const notificationId = `notif-${Date.now()}`;
+      setNotifications(prev => [
+        {
+          id: notificationId,
+          message: "Tournament state saved successfully",
+          type: 'success',
+          time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+          read: false
+        },
+        ...prev
+      ]);
+      
+      return true;
+    } catch (error: unknown) {
+      console.error('Error during force save:', error);
+      // Handle error message safely
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setDebugInfo(`Error during save: ${errorMessage}`);
+      return false;
+    }
+  }, [tournamentId, tournamentState, players, tables]);
 
   // When tabs are clicked, scroll to the top (especially useful for mobile)
   useEffect(() => {
@@ -735,16 +988,16 @@ export default function TournamentView() {
           <div className="bg-gray-800 rounded-lg p-6 mb-6">
             <h2 className="text-lg font-bold mb-4">Player Management</h2>
             <PlayerManager 
-              tournamentId={tournament?.id}
-              buyIn={tournament?.buyIn}
-              startingChips={tournament?.startingChips}
+              tournamentId={tournament?.id || ''}
+              buyIn={tournament?.buyIn || 0}
+              startingChips={tournament?.startingChips || 0}
               allowRebuys={true}
-              allowAddOns={tournament?.allowAddOns}
-              rebuyAmount={tournament?.rebuyAmount}
-              rebuyChips={tournament?.rebuyChips}
-              addOnAmount={tournament?.addOnAmount}
-              addOnChips={tournament?.addOnChips}
-              maxRebuys={tournament?.maxRebuys}
+              allowAddOns={tournament?.allowAddOns || false}
+              rebuyAmount={tournament?.rebuyAmount || 0}
+              rebuyChips={tournament?.rebuyChips || 0}
+              addOnAmount={tournament?.addOnAmount || 0}
+              addOnChips={tournament?.addOnChips || 0}
+              maxRebuys={tournament?.maxRebuys || 0}
               initialPlayers={players}
               onPlayerUpdate={handlePlayersUpdate}
               findNextAvailableSeat={findNextAvailableSeat}
@@ -754,13 +1007,13 @@ export default function TournamentView() {
           {/* Clock Tab (shown below in players view) */}
           <div className="space-y-6">
             <TournamentClock 
-              currentLevel={tournamentState?.currentLevel}
-              smallBlind={tournamentState?.blinds.small}
-              bigBlind={tournamentState?.blinds.big}
-              ante={tournamentState?.blinds.ante || 0}
-              timeRemaining={tournamentState?.levelTime}
-              isBreak={tournamentState?.isBreak}
-              isPaused={tournamentState?.isPaused}
+              currentLevel={tournamentState?.currentLevel || 1}
+              smallBlind={tournamentState?.blinds?.small || 25}
+              bigBlind={tournamentState?.blinds?.big || 50}
+              ante={(tournamentState?.blinds?.ante || 0)}
+              timeRemaining={tournamentState?.levelTime || 1200}
+              isBreak={tournamentState?.isBreak || false}
+              isPaused={tournamentState?.isPaused || true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -788,13 +1041,13 @@ export default function TournamentView() {
           {/* Clock Tab (shown below in tables view) */}
           <div className="space-y-6">
             <TournamentClock 
-              currentLevel={tournamentState?.currentLevel}
-              smallBlind={tournamentState?.blinds.small}
-              bigBlind={tournamentState?.blinds.big}
-              ante={tournamentState?.blinds.ante || 0}
-              timeRemaining={tournamentState?.levelTime}
-              isBreak={tournamentState?.isBreak}
-              isPaused={tournamentState?.isPaused}
+              currentLevel={tournamentState?.currentLevel || 1}
+              smallBlind={tournamentState?.blinds?.small || 25}
+              bigBlind={tournamentState?.blinds?.big || 50}
+              ante={(tournamentState?.blinds?.ante || 0)}
+              timeRemaining={tournamentState?.levelTime || 1200}
+              isBreak={tournamentState?.isBreak || false}
+              isPaused={tournamentState?.isPaused || true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -814,12 +1067,12 @@ export default function TournamentView() {
             <h2 className="text-lg font-bold mb-4">Payout Calculator</h2>
             <PayoutCalculator 
               entrants={tournamentStats.entrants}
-              buyIn={tournament?.buyIn}
-              fees={tournament?.entryFee}
+              buyIn={tournament?.buyIn || 0}
+              fees={tournament?.entryFee || 0}
               rebuys={tournamentStats.totalRebuys}
-              rebuyAmount={tournament?.rebuyAmount}
+              rebuyAmount={tournament?.rebuyAmount || 0}
               addOns={tournamentStats.totalAddOns}
-              addOnAmount={tournament?.addOnAmount}
+              addOnAmount={tournament?.addOnAmount || 0}
               onPayoutsCalculated={handlePayoutsUpdate}
             />
           </div>
@@ -827,13 +1080,13 @@ export default function TournamentView() {
           {/* Clock Tab (shown below in payouts view) */}
           <div className="space-y-6">
             <TournamentClock 
-              currentLevel={tournamentState?.currentLevel}
-              smallBlind={tournamentState?.blinds.small}
-              bigBlind={tournamentState?.blinds.big}
-              ante={tournamentState?.blinds.ante || 0}
-              timeRemaining={tournamentState?.levelTime}
-              isBreak={tournamentState?.isBreak}
-              isPaused={tournamentState?.isPaused}
+              currentLevel={tournamentState?.currentLevel || 1}
+              smallBlind={tournamentState?.blinds?.small || 25}
+              bigBlind={tournamentState?.blinds?.big || 50}
+              ante={(tournamentState?.blinds?.ante || 0)}
+              timeRemaining={tournamentState?.levelTime || 1200}
+              isBreak={tournamentState?.isBreak || false}
+              isPaused={tournamentState?.isPaused || true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -866,7 +1119,7 @@ export default function TournamentView() {
                     Cancel
                   </button>
                   <button
-                    onClick={saveBlindStructure}
+                    onClick={saveBlindStructureHandler}
                     className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg"
                   >
                     Save Changes
@@ -947,7 +1200,7 @@ export default function TournamentView() {
                         )}
                       </td>
                       <td className="py-3">
-                        {tournamentState?.levelTime / 60} min
+                        {Math.floor((tournamentState?.levelTime || 1200) / 60)} min
                       </td>
                     </tr>
                   ))}
@@ -962,13 +1215,13 @@ export default function TournamentView() {
       return (
         <div className="space-y-6">
           <TournamentClock 
-            currentLevel={tournamentState?.currentLevel}
-            smallBlind={tournamentState?.blinds.small}
-            bigBlind={tournamentState?.blinds.big}
-            ante={tournamentState?.blinds.ante || 0}
-            timeRemaining={tournamentState?.levelTime}
-            isBreak={tournamentState?.isBreak}
-            isPaused={tournamentState?.isPaused}
+            currentLevel={tournamentState?.currentLevel || 1}
+            smallBlind={tournamentState?.blinds?.small || 25}
+            bigBlind={tournamentState?.blinds?.big || 50}
+            ante={(tournamentState?.blinds?.ante || 0)}
+            timeRemaining={tournamentState?.levelTime || 1200}
+            isBreak={tournamentState?.isBreak || false}
+            isPaused={tournamentState?.isPaused || true}
             prizePool={tournamentStats.prizePool}
             payouts={payouts}
             eliminatedPlayers={getEliminatedPositions()}
@@ -1052,8 +1305,11 @@ export default function TournamentView() {
                   </tr>
                 </thead>
                 <tbody>
-                  {blindStructure.slice(tournamentState?.currentLevel - 1, tournamentState?.currentLevel + 5).map((level, i) => {
-                    const levelNumber = tournamentState?.currentLevel + i;
+                  {blindStructure.slice(
+                    Math.max(0, (tournamentState?.currentLevel || 1) - 1), 
+                    Math.min(blindStructure.length, (tournamentState?.currentLevel || 1) + 5)
+                  ).map((level, i) => {
+                    const levelNumber = (tournamentState?.currentLevel || 1) + i;
                     const isCurrentLevel = i === 0;
                     
                     return (
@@ -1063,7 +1319,7 @@ export default function TournamentView() {
                       >
                         <td className="p-2 font-medium">
                           {isCurrentLevel ? '→ ' : ''}{levelNumber}
-                          {levelNumber % tournamentState?.nextBreak === 0 ? ' (Break)' : ''}
+                          {levelNumber % (tournamentState?.nextBreak || 999) === 0 ? ' (Break)' : ''}
                         </td>
                         <td className="p-2">{level.small}</td>
                         <td className="p-2">{level.big}</td>
@@ -1072,7 +1328,7 @@ export default function TournamentView() {
                           {Math.round((level.big/level.small) * 10) / 10}
                         </td>
                         <td className="p-2 hidden md:table-cell">1:
-                          {Math.round(tournament?.startingChips / level.big)}
+                          {Math.round((tournament?.startingChips || 10000) / level.big)}
                         </td>
                       </tr>
                     );
@@ -1098,7 +1354,7 @@ export default function TournamentView() {
                 animate={{ opacity: 1, y: 0 }}
                 className="text-2xl font-bold tracking-tight"
               >
-                {tournament?.name}
+                {tournament?.name || 'Tournament'}
               </motion.h1>
               <motion.p 
                 initial={{ opacity: 0 }}
@@ -1106,7 +1362,7 @@ export default function TournamentView() {
                 transition={{ delay: 0.2 }}
                 className="text-sm text-gray-600 dark:text-gray-400"
               >
-                Buy-in: ${tournament?.buyIn} • Starting Stack: {tournament?.startingChips.toLocaleString()} • Status: {tournamentState?.isPaused ? 'paused' : 'running'}
+                Buy-in: ${tournament?.buyIn || 0} • Starting Stack: {tournament?.startingChips?.toLocaleString() || 0} • Status: {tournamentState?.isPaused ? 'paused' : 'running'}
               </motion.p>
             </div>
             
@@ -1118,11 +1374,27 @@ export default function TournamentView() {
                 New Tournament
               </Link>
               <button 
-                onClick={() => saveTournamentState(tournamentId, tournamentState)}
-                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm"
+                onClick={forceSaveState}
+                className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors text-sm flex items-center"
               >
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 mr-1" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                </svg>
                 Save State
               </button>
+              {debugInfo && (
+                <div className="fixed bottom-20 left-4 bg-gray-900 p-4 rounded-lg shadow-lg border border-gray-700 text-xs font-mono text-gray-300 max-w-sm z-50 whitespace-pre-wrap">
+                  <div className="flex justify-between items-center mb-2">
+                    <strong>Debug Info</strong>
+                    <button onClick={() => setDebugInfo('')} className="text-gray-500 hover:text-white">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  </div>
+                  {debugInfo}
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -1198,13 +1470,13 @@ export default function TournamentView() {
               transition={{ duration: 0.3 }}
             >
               <TournamentClock 
-                currentLevel={tournamentState?.currentLevel}
-                smallBlind={tournamentState?.blinds.small}
-                bigBlind={tournamentState?.blinds.big}
-                ante={tournamentState?.blinds.ante || 0}
-                timeRemaining={tournamentState?.levelTime}
-                isBreak={tournamentState?.isBreak}
-                isPaused={tournamentState?.isPaused}
+                currentLevel={tournamentState?.currentLevel || 1}
+                smallBlind={tournamentState?.blinds?.small || 25}
+                bigBlind={tournamentState?.blinds?.big || 50}
+                ante={(tournamentState?.blinds?.ante || 0)}
+                timeRemaining={tournamentState?.levelTime || 1200}
+                isBreak={tournamentState?.isBreak || false}
+                isPaused={tournamentState?.isPaused || true}
                 prizePool={tournamentStats.prizePool}
                 payouts={payouts}
                 eliminatedPlayers={getEliminatedPositions()}
@@ -1225,16 +1497,16 @@ export default function TournamentView() {
               transition={{ duration: 0.3 }}
             >
               <PlayerManager 
-                tournamentId={tournament?.id}
-                buyIn={tournament?.buyIn}
-                startingChips={tournament?.startingChips}
+                tournamentId={tournament?.id || ''}
+                buyIn={tournament?.buyIn || 0}
+                startingChips={tournament?.startingChips || 0}
                 allowRebuys={true}
-                allowAddOns={tournament?.allowAddOns}
-                rebuyAmount={tournament?.rebuyAmount}
-                rebuyChips={tournament?.rebuyChips}
-                addOnAmount={tournament?.addOnAmount}
-                addOnChips={tournament?.addOnChips}
-                maxRebuys={tournament?.maxRebuys}
+                allowAddOns={tournament?.allowAddOns || false}
+                rebuyAmount={tournament?.rebuyAmount || 0}
+                rebuyChips={tournament?.rebuyChips || 0}
+                addOnAmount={tournament?.addOnAmount || 0}
+                addOnChips={tournament?.addOnChips || 0}
+                maxRebuys={tournament?.maxRebuys || 0}
                 initialPlayers={players}
                 onPlayerUpdate={handlePlayersUpdate}
                 findNextAvailableSeat={findNextAvailableSeat}
@@ -1268,12 +1540,12 @@ export default function TournamentView() {
             >
               <PayoutCalculator 
                 entrants={tournamentStats.entrants}
-                buyIn={tournament?.buyIn}
-                fees={tournament?.entryFee}
+                buyIn={tournament?.buyIn || 0}
+                fees={tournament?.entryFee || 0}
                 rebuys={tournamentStats.totalRebuys}
-                rebuyAmount={tournament?.rebuyAmount}
+                rebuyAmount={tournament?.rebuyAmount || 0}
                 addOns={tournamentStats.totalAddOns}
-                addOnAmount={tournament?.addOnAmount}
+                addOnAmount={tournament?.addOnAmount || 0}
                 onPayoutsCalculated={handlePayoutsUpdate}
               />
             </motion.div>
@@ -1299,7 +1571,7 @@ export default function TournamentView() {
                         Cancel
                       </button>
                       <button
-                        onClick={saveBlindStructure}
+                        onClick={saveBlindStructureHandler}
                         className="px-3 py-1 bg-green-600 hover:bg-green-700 text-white text-sm rounded-lg"
                       >
                         Save Changes
@@ -1380,7 +1652,7 @@ export default function TournamentView() {
                             )}
                           </td>
                           <td className="py-3">
-                            {tournamentState?.levelTime / 60} min
+                            {Math.floor((tournamentState?.levelTime || 1200) / 60)} min
                           </td>
                         </tr>
                       ))}
@@ -1393,6 +1665,17 @@ export default function TournamentView() {
         </AnimatePresence>
       </main>
       
+      {/* Footer */}
+      <Footer />
+      
+      {/* Notifications component */}
+      <Notifications 
+        notifications={notifications}
+        onDismiss={dismissNotification}
+        onDismissAll={dismissAllNotifications}
+        onMarkAsRead={markNotificationAsRead}
+      />
+      
       {/* Add global styles */}
       <style jsx global>{`
         .hide-scrollbar::-webkit-scrollbar {
@@ -1403,8 +1686,6 @@ export default function TournamentView() {
           scrollbar-width: none;
         }
       `}</style>
-      
-      <Footer />
     </div>
   );
 } 

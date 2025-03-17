@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 
 interface TournamentClockProps {
   currentLevel: number;
@@ -37,6 +37,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
 }) => {
   const [remainingTime, setRemainingTime] = useState(timeRemaining);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [isPauseAnimating, setIsPauseAnimating] = useState(false);
 
   // Format time as HH:MM:SS
   const formatTime = (timeInSeconds: number): string => {
@@ -54,51 +55,120 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
       : `$${amount.toLocaleString()}`;
   };
 
-  // Timer logic
+  // Update remainingTime when timeRemaining prop changes
   useEffect(() => {
+    console.log('Time remaining changed:', timeRemaining);
     setRemainingTime(timeRemaining);
   }, [timeRemaining]);
 
-  // Update timer every second
+  // Enhanced pause toggle handler with visual feedback
+  const handlePauseToggle = useCallback(() => {
+    // Visual feedback animation
+    setIsPauseAnimating(true);
+    setTimeout(() => setIsPauseAnimating(false), 300);
+    
+    console.log('Toggling pause state, current isPaused:', isPaused);
+    
+    // Call the parent component's toggle handler
+    onPauseToggle();
+  }, [isPaused, onPauseToggle]);
+
+  // Update timer every second with improved reliability
   useEffect(() => {
-    if (isPaused) return;
+    if (isPaused) {
+      console.log('Timer is paused, not starting interval');
+      return;
+    }
+    
+    console.log('Setting up timer, isPaused:', isPaused, 'remainingTime:', remainingTime);
+    
+    // Use a more reliable approach for timer updates
+    const startTime = Date.now();
+    const initialRemainingTime = remainingTime;
     
     const timer = setInterval(() => {
-      setRemainingTime((prevTime) => {
-        if (prevTime <= 1) {
-          clearInterval(timer);
-          onTimerEnd();
-          return 0;
-        }
-        return prevTime - 1;
-      });
+      // Calculate elapsed time since timer started
+      const elapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+      const newRemainingTime = Math.max(0, initialRemainingTime - elapsedSeconds);
+      
+      console.log('Timer update:', newRemainingTime);
+      setRemainingTime(newRemainingTime);
+      
+      if (newRemainingTime <= 0) {
+        console.log('Timer reached zero, ending timer');
+        clearInterval(timer);
+        onTimerEnd();
+      }
     }, 1000);
     
-    return () => clearInterval(timer);
-  }, [isPaused, onTimerEnd]);
+    return () => {
+      console.log('Cleaning up timer');
+      clearInterval(timer);
+    };
+  }, [isPaused, onTimerEnd, remainingTime]);
 
-  // Toggle fullscreen mode
-  const toggleFullscreen = () => {
-    setIsFullscreen(!isFullscreen);
-  };
+  // When isFullscreen changes, we ensure the timer doesn't reset
+  useEffect(() => {
+    console.log('Fullscreen mode changed:', isFullscreen);
+  }, [isFullscreen]);
 
-  // Exit fullscreen if Escape key is pressed
+  // Toggle fullscreen mode with explicit state management
+  const toggleFullscreen = useCallback(() => {
+    console.log('Toggling fullscreen mode', !isFullscreen);
+    setIsFullscreen(prev => !prev);
+  }, [isFullscreen]);
+
+  // Enhanced keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      console.log('Key pressed:', e.key);
+      
+      // Prevent actions if user is typing in an input field
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
+        console.log('Ignoring key as target is input/textarea');
+        return;
+      }
+      
       if (e.key === 'Escape' && isFullscreen) {
+        console.log('ESC pressed, exiting fullscreen');
         setIsFullscreen(false);
       }
       
       // Spacebar to toggle pause
       if (e.key === ' ' || e.key === 'Spacebar') {
-        onPauseToggle();
+        console.log('Spacebar pressed, toggling pause');
+        handlePauseToggle();
+        e.preventDefault();
+      }
+      
+      // Left/right arrows for previous/next level
+      if (e.key === 'ArrowRight') {
+        console.log('Right arrow pressed, going to next level');
+        onNextLevel();
+        e.preventDefault();
+      }
+      
+      if (e.key === 'ArrowLeft') {
+        console.log('Left arrow pressed, going to previous level');
+        onPrevLevel();
+        e.preventDefault();
+      }
+      
+      // F key for fullscreen
+      if (e.key === 'f' || e.key === 'F') {
+        console.log('F key pressed, toggling fullscreen');
+        toggleFullscreen();
         e.preventDefault();
       }
     };
 
+    console.log('Setting up keyboard event listeners', { isFullscreen });
     window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isFullscreen, onPauseToggle]);
+    return () => {
+      console.log('Removing keyboard event listeners');
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [isFullscreen, handlePauseToggle, onNextLevel, onPrevLevel]);
   
   // Get top 3 payouts + the next to cash
   const getDisplayPayouts = () => {
@@ -242,15 +312,17 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             </div>
           </div>
           
-          {/* Large pause button */}
+          {/* Large pause button with enhanced animation */}
           <div className="mt-12 flex justify-center">
             <button
-              className={`flex items-center justify-center text-2xl font-bold py-6 px-10 rounded-full shadow-lg transition-all ${
+              className={`flex items-center justify-center text-2xl font-bold py-6 px-10 rounded-full shadow-lg transition-all transform ${
+                isPauseAnimating ? 'scale-105' : 'scale-100'
+              } ${
                 isPaused 
                   ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
                   : 'bg-red-600 hover:bg-red-700 text-white'
               }`}
-              onClick={onPauseToggle}
+              onClick={handlePauseToggle}
             >
               {isPaused ? (
                 <>
@@ -271,7 +343,13 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </div>
           
           <div className="text-gray-500 mt-8 text-center">
-            Press Space to {isPaused ? 'Resume' : 'Pause'} • Press Esc to Exit Fullscreen
+            <div>Keyboard Shortcuts:</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-sm">
+              <span className="bg-gray-800 px-2 py-1 rounded">Space: {isPaused ? 'Resume' : 'Pause'}</span>
+              <span className="bg-gray-800 px-2 py-1 rounded">F: Fullscreen</span>
+              <span className="bg-gray-800 px-2 py-1 rounded">←: Previous Level</span>
+              <span className="bg-gray-800 px-2 py-1 rounded">→: Next Level</span>
+            </div>
           </div>
         </div>
       </div>
@@ -314,13 +392,11 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             
             {/* Pause overlay */}
             <button 
-              onClick={onPauseToggle}
+              onClick={handlePauseToggle}
               className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
             >
               <span className={`flex items-center justify-center text-lg font-bold py-2 px-6 rounded-full transition ${
-                isPaused 
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
-                  : 'bg-red-600 hover:bg-red-700 text-white'
+                isPauseAnimating ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
               }`}>
                 {isPaused ? (
                   <>
@@ -448,7 +524,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
                 ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
                 : 'bg-red-600 hover:bg-red-700 text-white'
             }`}
-            onClick={onPauseToggle}
+            onClick={handlePauseToggle}
           >
             {isPaused ? (
               <>

@@ -189,22 +189,18 @@ const ViewTournament = () => {
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
               <div className="lg:col-span-2">
                 <TournamentClock 
-                  tournamentName={tournament.name}
-                  tournamentId={tournament.id}
-                  startingChips={tournament.startingChips}
                   currentLevel={tournament.currentLevel}
-                  levelTime={tournament.levelTime}
-                  blinds={tournament.blinds}
-                  ante={tournament.ante}
-                  bringIn={tournament.bringIn}
-                  payingPlaces={tournament.payingPlaces}
-                  entrants={tournament.entrants}
-                  prizePool={tournament.prizePool}
-                  nextBreak={tournament.nextBreak}
-                  breakLength={tournament.breakLength}
+                  smallBlind={tournament.blinds[tournament.currentLevel - 1].small}
+                  bigBlind={tournament.blinds[tournament.currentLevel - 1].big}
+                  ante={tournament.ante[tournament.currentLevel - 1]}
+                  timeRemaining={tournament.levelTime}
+                  isBreak={tournament.isBreak}
                   isPaused={tournament.isPaused}
-                  onLevelChange={handleLevelChange}
+                  prizePool={tournament.prizePool}
                   onTimerEnd={handleTimerEnd}
+                  onPauseToggle={togglePause}
+                  onNextLevel={() => handleLevelChange(tournament.currentLevel + 1)}
+                  onPrevLevel={() => handleLevelChange(tournament.currentLevel - 1)}
                 />
               </div>
               

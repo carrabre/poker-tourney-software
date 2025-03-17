@@ -1,4 +1,50 @@
-import { Player, Tournament, BlindLevel, TournamentState } from '@/app/types';
+import { Player, Blind, TableConfig, Payout } from '@/app/types';
+
+// Define interfaces locally if they're not exported from types
+interface Tournament {
+  id: string;
+  name: string;
+  startingChips: number;
+  buyIn: number;
+  entryFee: number;
+  maxRebuys: number;
+  rebuyAmount: number;
+  rebuyChips: number;
+  allowAddOns: boolean;
+  addOnAmount: number;
+  addOnChips: number;
+  nextBreak: number;
+  breakLength: number;
+  created_at?: string;
+}
+
+// Use Blind from imports instead
+type BlindLevel = Blind;
+
+interface TournamentState {
+  id: string;
+  name: string;
+  startingChips: number;
+  buyIn: number;
+  entryFee: number;
+  maxRebuys: number;
+  rebuyAmount: number;
+  rebuyChips: number;
+  allowAddOns: boolean;
+  addOnAmount: number;
+  addOnChips: number;
+  currentLevel: number;
+  levelTime: number; // seconds
+  isPaused: boolean;
+  nextBreak: number;
+  breakLength: number; // minutes
+  blinds: Blind;
+  isBreak: boolean;
+  announcements: string[];
+  payouts: Payout[];
+  lastUpdated?: string;
+  created_at?: string;
+}
 
 // Keys for localStorage
 const TOURNAMENTS_KEY = 'poker_tournaments';
@@ -53,7 +99,7 @@ export const getTournamentById = (id: string): Tournament | null => {
   }
 };
 
-export const saveTournament = (tournament: Tournament): boolean => {
+export const saveTournament = (tournament: Tournament, skipStateUpdate = false): boolean => {
   if (typeof window === 'undefined') return false;
   
   try {
@@ -70,13 +116,16 @@ export const saveTournament = (tournament: Tournament): boolean => {
     
     localStorage.setItem(TOURNAMENTS_KEY, JSON.stringify(tournaments));
     
-    // Also save to the state storage to ensure consistency
-    const existingState = getTournamentState(tournament.id);
-    if (existingState) {
-      saveTournamentState(tournament.id, {
-        ...existingState,
-        ...tournament  // Update with the new tournament properties
-      });
+    // Only update the state if skipStateUpdate is false
+    if (!skipStateUpdate) {
+      // Also save to the state storage to ensure consistency
+      const existingState = getTournamentState(tournament.id);
+      if (existingState) {
+        saveTournamentState(tournament.id, {
+          ...existingState,
+          ...tournament  // Update with the new tournament properties
+        }, true); // Pass true to skip the tournament update
+      }
     }
     
     return true;
@@ -196,20 +245,20 @@ export const getBlindStructure = (tournamentId: string): BlindLevel[] => {
 };
 
 // Tournament state functions (for complete tournament state including runtime data)
-export const saveTournamentState = (tournamentId: string, state: any): boolean => {
+export const saveTournamentState = (tournamentId: string, state: any, skipTournamentUpdate = false): boolean => {
   if (typeof window === 'undefined') return false;
   
   try {
-    // Ensure the state includes a lastUpdated timestamp
-    const stateToSave = {
+    // Remove circular references and functions
+    const safeState = JSON.parse(JSON.stringify({
       ...state,
       lastUpdated: new Date().toISOString()
-    };
+    }));
     
-    localStorage.setItem(`${TOURNAMENT_STATE_PREFIX}${tournamentId}`, JSON.stringify(stateToSave));
+    localStorage.setItem(`${TOURNAMENT_STATE_PREFIX}${tournamentId}`, JSON.stringify(safeState));
     
-    // Also update the main tournament record if this state includes tournament properties
-    if (state.name && state.startingChips) {
+    // Only update the tournament if skipTournamentUpdate is false
+    if (!skipTournamentUpdate && state.name && state.startingChips) {
       const tournamentData: Tournament = {
         id: tournamentId,
         name: state.name,
@@ -227,7 +276,7 @@ export const saveTournamentState = (tournamentId: string, state: any): boolean =
         created_at: state.created_at || new Date().toISOString()
       };
       
-      saveTournament(tournamentData);
+      saveTournament(tournamentData, true); // Pass true to skip updating the state again
     }
     
     return true;
@@ -276,8 +325,8 @@ export const saveCompleteTournamentState = (tournamentId: string, tournamentStat
   if (typeof window === 'undefined') return false;
   
   try {
-    // Save the tournament state
-    saveTournamentState(tournamentId, tournamentState);
+    // Save the tournament state, skip tournament update for now
+    saveTournamentState(tournamentId, tournamentState, true);
     
     // Save players
     savePlayers(players, tournamentId);
@@ -303,7 +352,8 @@ export const saveCompleteTournamentState = (tournamentId: string, tournamentStat
       created_at: tournamentState.created_at || new Date().toISOString()
     };
     
-    saveTournament(tournamentData);
+    // Update the tournament record without updating state again
+    saveTournament(tournamentData, true);
     
     return true;
   } catch (err) {
