@@ -9,7 +9,7 @@ import TableManager from '@/app/components/TableManager';
 import PayoutCalculator from '@/app/components/PayoutCalculator';
 import { Player, Blind, TableConfig, Payout } from '@/app/types';
 import supabase from '@/app/utils/supabase';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, ReadonlyURLSearchParams } from 'next/navigation';
 import Footer from '@/app/components/Footer';
 import Notifications from '@/app/components/Notifications';
 import { 
@@ -20,8 +20,19 @@ import {
   saveCompleteTournamentState, 
   saveTournamentState, 
   getTables,
-  saveBlindStructure as saveStoredBlindStructure
+  saveBlindStructure as saveStoredBlindStructure,
+  saveTables
 } from '@/app/utils/localStorage';
+
+// Create a separate component for handling search params to fix the build error
+function TournamentParams({ 
+  children 
+}: { 
+  children: (params: ReadonlyURLSearchParams | null) => React.ReactNode 
+}) {
+  const searchParams = useSearchParams();
+  return <>{children(searchParams)}</>;
+}
 
 // Add this new interface for tournaments
 interface Tournament {
@@ -62,25 +73,8 @@ interface TournamentState {
   isBreak: boolean;
   announcements: string[];
   payouts: Payout[];
+  tables?: { tableNumber: number; isEmpty: boolean }[];
 }
-
-// Player interface as expected by TableManager and PlayerManager components
-// interface Player {
-//   id: string;
-//   name: string;
-//   tableNumber: number;
-//   seatNumber: number;
-//   chips: number;
-//   status: 'active' | 'eliminated' | 'final-table';
-//   finishPosition?: number;
-//   rebuys: number;
-//   addOns: number;
-// }
-
-// interface TableConfig {
-//   id: number;
-//   maxSeats: number;
-// }
 
 // Add back the blindStructure constant after the getEliminatedPositions function
   // This would typically come from an API or state management
@@ -180,33 +174,40 @@ const generateDefaultPayouts = (
   return payouts;
 };
 
+// Helper function to format time as HH:MM:SS
+const formatTime = (seconds: number): string => {
+  const hours = Math.floor(seconds / 3600);
+  const minutes = Math.floor((seconds % 3600) / 60);
+  const secs = seconds % 60;
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+};
+
 // Wrap the main component with a loader component that uses Suspense
-function TournamentViewContent() {
-  const searchParams = useSearchParams();
+// Changed to accept searchParams as a prop instead of using the hook directly
+function TournamentViewContent({ searchParams }: { searchParams: ReadonlyURLSearchParams | null }) {
   const tournamentId = searchParams?.get('id') || 'demo';
-  const isDemoTournament = tournamentId === 'demo';
   
-  // State variables for tournament data
+  // State for tournament data
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [tournamentState, setTournamentState] = useState<TournamentState | null>(null);
   const [players, setPlayers] = useState<Player[]>([]);
   const [tables, setTables] = useState<TableConfig[]>([]);
-  const [blindLevels, setBlindLevels] = useState<Blind[]>(blindStructure);
-  
-  // UI state variables
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState('clock');
-  const [isEditingBlinds, setIsEditingBlinds] = useState(false);
-  const [editableBlinds, setEditableBlinds] = useState<Blind[]>([]);
+  const [blindLevels, setBlindLevels] = useState<Blind[]>([]);
   const [payouts, setPayouts] = useState<Payout[]>([]);
+  
+  // UI state
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState('clock');
+  const [mobileTab, setMobileTab] = useState<string | null>(null);
+  const [notifications, setNotifications] = useState<TournamentNotification[]>([]);
+  const [isEditingPayouts, setIsEditingPayouts] = useState(false);
+  const [isEditingBlinds, setIsEditingBlinds] = useState(false);
   const [isFullScreen, setIsFullScreen] = useState(false);
-  const [autoSaveInterval, setAutoSaveInterval] = useState<NodeJS.Timeout | null>(null);
+  const [forceUpdateTimestamp, setForceUpdateTimestamp] = useState(Date.now());
+  const [editableBlinds, setEditableBlinds] = useState<Blind[]>([]);
   
   // Used for mobile view tab selection
-  const [mobileTab, setMobileTab] = useState('clock');
-  
-  // Table configuration
   const [tablesConfig, setTablesConfig] = useState<TableConfig[]>([
     { id: 1, maxSeats: 9 },
     { id: 2, maxSeats: 9 }
@@ -216,9 +217,6 @@ function TournamentViewContent() {
   const [blindStructureState, setBlindStructureState] = useState<Blind[]>([]);
   
   // Add state for notifications
-  const [notifications, setNotifications] = useState<TournamentNotification[]>([]);
-  
-  // Add state for auto-save throttling
   const [lastSaveTime, setLastSaveTime] = useState<number>(Date.now());
   const AUTO_SAVE_THROTTLE = 5000; // Only save every 5 seconds at most
   
@@ -306,7 +304,7 @@ function TournamentViewContent() {
       
       try {
         // Handle demo tournament
-        if (isDemoTournament) {
+        if (tournamentId === 'demo') {
           // Setup a demo tournament
           setupDemoTournament();
           return;
@@ -358,11 +356,51 @@ function TournamentViewContent() {
             setEditableBlinds(savedBlinds);
           }
           
-          // Load tables if available
+          // IMPORTANT FIX: Load tables if available - check multiple storage locations
+          console.log('Attempting to load tables for tournament ID:', tournamentId);
+          
+          // First try dedicated tables storage
           const savedTables = getTables(tournamentId);
+          console.log('Tables from dedicated storage:', savedTables);
+          
           if (savedTables && savedTables.length > 0) {
-            console.log('Loaded tables from localStorage:', savedTables.length, 'tables');
+            console.log('✅ Loaded tables from dedicated localStorage:', savedTables.length, 'tables');
             setTables(savedTables);
+          } 
+          // Then check tournament state tables
+          else if (savedState.tables && savedState.tables.length > 0) {
+            console.log('✅ Found tables in tournament state:', savedState.tables.length);
+            
+            // Convert from tournamentState.tables format to TableConfig format
+            const convertedTables = savedState.tables.map((table: {tableNumber: number, isEmpty: boolean}) => ({
+              id: table.tableNumber,
+              maxSeats: 9 // Default value
+            }));
+            
+            setTables(convertedTables);
+            
+            // Also save to the dedicated tables storage for future use
+            console.log('Saving tables to dedicated storage for future use');
+            saveTables(tournamentId, convertedTables);
+          }
+          // Final fallback - check for a generic 'tables' key
+          else {
+            // This is a last resort check for tables saved with an incorrect key
+            try {
+              const fallbackTablesJson = localStorage.getItem('tables');
+              if (fallbackTablesJson) {
+                const fallbackTables = JSON.parse(fallbackTablesJson);
+                if (Array.isArray(fallbackTables) && fallbackTables.length > 0) {
+                  console.log('⚠️ Found tables in generic "tables" localStorage key:', fallbackTables.length);
+                  setTables(fallbackTables);
+                  
+                  // Save to the correct location
+                  saveTables(tournamentId, fallbackTables);
+                }
+              }
+            } catch (error) {
+              console.error('Error checking fallback tables:', error);
+            }
           }
           
           // Set payouts if available
@@ -416,6 +454,18 @@ function TournamentViewContent() {
             if (savedTables && savedTables.length > 0) {
               console.log('Loaded tables from localStorage:', savedTables.length, 'tables');
               setTables(savedTables);
+            } else if (savedState.tables && savedState.tables.length > 0) {
+              // Fallback to tables from the tournament state if no dedicated tables found
+              console.log('No tables in dedicated storage, falling back to tables in tournament state:', savedState.tables.length);
+              // Convert from tournamentState.tables format to TableConfig format
+              const convertedTables = savedState.tables.map((table: {tableNumber: number, isEmpty: boolean}) => ({
+                id: table.tableNumber,
+                maxSeats: 9 // Default
+              }));
+              setTables(convertedTables);
+              
+              // Also save to the dedicated tables storage for future use
+              saveTables(tournamentId, convertedTables);
             }
           } else {
             // No tournament found in localStorage, show error
@@ -431,7 +481,7 @@ function TournamentViewContent() {
     };
     
     fetchTournament();
-  }, [tournamentId, isDemoTournament]);
+  }, [tournamentId]);
   
   // Replace the auto-save effect with a more responsive version
   useEffect(() => {
@@ -450,7 +500,15 @@ function TournamentViewContent() {
       // Save tournament state
       saveTournamentState(tournamentId, essentialState);
       
-      // Save complete state if we have players
+      // Save tables separately to ensure they persist - ALWAYS save tables regardless of player count
+      if (tables.length > 0) {
+        console.log(`Saving ${tables.length} tables to dedicated storage`);
+        const saved = saveTables(tournamentId, tables);
+        console.log(`Tables saved successfully: ${saved ? 'Yes' : 'No'}`);
+      }
+      
+      // Save complete state - always include tables regardless of players
+      // Save player data if we have players
       if (players.length > 0) {
         // Clean the players data before saving
         const cleanPlayers = players.map(player => ({
@@ -461,6 +519,10 @@ function TournamentViewContent() {
         }));
         
         saveCompleteTournamentState(tournamentId, essentialState, cleanPlayers, tables);
+      } else if (tables.length > 0) {
+        // Even if no players, save tables if they exist
+        saveCompleteTournamentState(tournamentId, essentialState, [], tables);
+        console.log('Saved tournament state with empty players array but existing tables');
       }
       
       setLastSaveTime(Date.now());
@@ -489,10 +551,10 @@ function TournamentViewContent() {
       if (tournamentState && tournamentId !== 'demo') {
         console.log('Saving state before page unload');
         
-        // Strip out unnecessary data
+        // Ensure isPaused is true when the page unloads to prevent timers running in the background
         const essentialState = {
           ...tournamentState,
-          // Don't include announcements in the save to reduce size
+          isPaused: true, // Always pause when unloading
           announcements: tournamentState.announcements.slice(0, 5)
         };
         
@@ -573,67 +635,80 @@ function TournamentViewContent() {
   // Use the calculated stats
   const tournamentStats = calculateTournamentStats;
   
-  // Find the next available seat at a table - enhanced with random assignment for multiple tables
+  // Find the next available seat at a table - enhanced with fully random assignment
   const findNextAvailableSeat = () => {
-    // Create a mapping of filled seats by table
-    const filledSeats: Record<number, Set<number>> = {};
-    tables.forEach(table => {
-      filledSeats[table.id] = new Set<number>();
-    });
+    // Get all active players who have a table and seat assigned
+    const activePlayers = players.filter(
+      (player) => player.status === "active" && player.tableNumber && player.seatNumber
+    );
+
+    // If no tables exist yet, start with table 1
+    if (activePlayers.length === 0) {
+      return { tableNumber: 1, seatNumber: 1 };
+    }
+
+    // Map of tables and their filled seats
+    const filledSeatsByTable: Record<number, number[]> = {};
     
-    // Add all taken seats to the mapping
-    players.forEach(player => {
-      if (player.status === 'active' && player.tableNumber) {
-        if (filledSeats[player.tableNumber]) {
-          filledSeats[player.tableNumber].add(player.seatNumber);
+    // Get all tables including manually created ones from tournamentState
+    const allTables = tournamentState?.tables || [];
+    const tableNumbers = allTables.map(table => table.tableNumber);
+    
+    // If no tables found in tournamentState, get them from players
+    if (tableNumbers.length === 0) {
+      // Gather unique table numbers from players
+      activePlayers.forEach(player => {
+        if (player.tableNumber) {
+          if (!tableNumbers.includes(player.tableNumber)) {
+            tableNumbers.push(player.tableNumber);
+          }
         }
-      }
-    });
-    
-    // If we have multiple tables, consider random assignment for better distribution
-    const tableIds = Object.keys(filledSeats).map(Number);
-    if (tableIds.length > 1) {
-      // Find tables that aren't full
-      const availableTables = tableIds.filter(tableId => {
-        const table = tables.find(t => t.id === tableId);
-        const maxSeats = table ? table.maxSeats : 9;
-        return filledSeats[tableId].size < maxSeats;
       });
+    }
+    
+    // Collect all filled seats for each table
+    activePlayers.forEach(player => {
+      if (player.tableNumber && player.seatNumber) {
+        if (!filledSeatsByTable[player.tableNumber]) {
+          filledSeatsByTable[player.tableNumber] = [];
+        }
+        filledSeatsByTable[player.tableNumber].push(player.seatNumber);
+      }
+    });
+
+    // First look for any existing table with an available seat
+    for (const tableNumber of tableNumbers) {
+      const filledSeats = filledSeatsByTable[tableNumber] || [];
+      // Look for the first open seat (from 1-9)
+      for (let seatNumber = 1; seatNumber <= 9; seatNumber++) {
+        if (!filledSeats.includes(seatNumber)) {
+          console.log(`Found available seat: Table ${tableNumber}, Seat ${seatNumber}`);
+          return { tableNumber, seatNumber };
+        }
+      }
+    }
+
+    // If all existing tables are full (or no tables exist), create a new table
+    const newTableNumber = Math.max(...tableNumbers, 0) + 1;
+    
+    // Create the new table in tournamentState for persistence
+    if (tournamentState) {
+      const updatedState = {
+        ...tournamentState,
+        tables: [...(tournamentState.tables || []), { tableNumber: newTableNumber, isEmpty: false }]
+      };
+      setTournamentState(updatedState);
       
-      if (availableTables.length > 0) {
-        // Randomly select a table from available tables
-        const randomTableIndex = Math.floor(Math.random() * availableTables.length);
-        const selectedTableId = availableTables[randomTableIndex];
-        
-        // Find an available seat at the selected table
-        const table = tables.find(t => t.id === selectedTableId);
-        const maxSeats = table ? table.maxSeats : 9;
-        for (let seat = 1; seat <= maxSeats; seat++) {
-          if (!filledSeats[selectedTableId].has(seat)) {
-            console.log(`Randomly assigned to table ${selectedTableId}, seat ${seat}`);
-            return { tableNumber: selectedTableId, seatNumber: seat };
-          }
-        }
+      // Save immediately to ensure persistence
+      try {
+        localStorage.setItem('tournamentState', JSON.stringify(updatedState));
+      } catch (error) {
+        console.error('Failed to save new table to localStorage:', error);
       }
     }
     
-    // Fall back to prioritize filling existing tables if random assignment didn't work
-    for (const table of tables) {
-      const tableSeats = filledSeats[table.id];
-      if (tableSeats && tableSeats.size < table.maxSeats) {
-        // Find first available seat number
-        for (let seat = 1; seat <= table.maxSeats; seat++) {
-          if (!tableSeats.has(seat)) {
-            return { tableNumber: table.id, seatNumber: seat };
-          }
-        }
-      }
-    }
-    
-    // If no seats available, create a new table
-    const newTableId = Math.max(0, ...Object.keys(filledSeats).map(Number)) + 1;
-    setTables(prev => [...prev, { id: newTableId, maxSeats: 9 }]);
-    return { tableNumber: newTableId, seatNumber: 1 };
+    console.log(`Created new table ${newTableNumber}, seat 1`);
+    return { tableNumber: newTableNumber, seatNumber: 1 };
   };
   
   // Handle player updates with auto table/seat assignment
@@ -802,38 +877,73 @@ function TournamentViewContent() {
     }
   };
   
-  // Toggle pause state
+  // Toggle pause functionality - completely rewritten to fix resume button
   const togglePause = () => {
-    if (!tournamentState) return;
+    console.log(`[TOURNAMENT] 🔄 Toggling pause state. Current state: isPaused=${tournamentState?.isPaused}, levelTime=${tournamentState?.levelTime}`);
     
-    const newIsPaused = !tournamentState.isPaused;
+    // Make sure tournament state exists
+    if (!tournamentState) {
+      console.error('Cannot toggle pause: tournament state is null');
+      return;
+    }
     
-    setTournamentState(prev => {
-      if (!prev) return null;
+    try {
+      // Capture the current levelTime value before making any changes
+      const currentLevelTime = tournamentState.levelTime;
+      console.log(`[TOURNAMENT] ⏱️ Current time value before toggle: ${currentLevelTime}s`);
       
-      // Add announcement when tournament starts or pauses
-      if (newIsPaused) {
-        addAnnouncement("Tournament clock paused");
-      } else if (prev.currentLevel === 1 && prev.isPaused) {
-        addAnnouncement("Tournament has started!");
-      } else {
-        addAnnouncement("Tournament clock resumed");
-      }
+      // Explicitly set to the opposite of current value
+      const newPausedState = !tournamentState.isPaused;
+      console.log(`[TOURNAMENT] ⚡ Changing isPaused from ${tournamentState.isPaused} to ${newPausedState}`);
       
-      // Create the updated state
+      // Create a new state object
       const updatedState = {
-      ...prev,
-        isPaused: newIsPaused
+        ...tournamentState,
+        isPaused: newPausedState
+        // IMPORTANT: We do NOT update the levelTime here to ensure it remains consistent
       };
       
-      // Immediately save to localStorage for better persistence
-      if (tournamentId !== 'demo') {
-        console.log('Immediately saving pause state change');
-        saveTournamentState(tournamentId, updatedState);
+      // Immediately update the state
+      setTournamentState(updatedState);
+      
+      // Force immediate save to localStorage
+      try {
+        localStorage.setItem(`tournamentState`, JSON.stringify(updatedState));
+        console.log(`[TOURNAMENT] 💾 Tournament state saved after pause toggle`);
+        console.log(`[TOURNAMENT] ⏱️ Preserved time value: ${updatedState.levelTime}s`);
+        
+        // Verify the state was updated
+        const savedState = JSON.parse(localStorage.getItem(`tournamentState`) || '{}');
+        console.log('[TOURNAMENT] 🔍 Verification - State in localStorage:', savedState.isPaused);
+      } catch (error) {
+        console.error('[TOURNAMENT] ❌ Failed to save tournament state:', error);
       }
       
-      return updatedState;
-    });
+      // Force a re-render to ensure the UI updates
+      setForceUpdateTimestamp(Date.now());
+      
+      // Direct announcement based on new state
+      if (newPausedState) {
+        const pauseMsg = `Tournament paused with ${formatTime(currentLevelTime)} remaining`;
+        addAnnouncement(pauseMsg);
+        console.log(`[TOURNAMENT] ⏸️ ${pauseMsg}`);
+      } else {
+        const resumeMsg = `Tournament resumed with ${formatTime(currentLevelTime)} remaining`;
+        addAnnouncement(resumeMsg);
+        console.log(`[TOURNAMENT] ▶️ ${resumeMsg}`);
+      }
+      
+      // Re-verify state after a small delay
+      setTimeout(() => {
+        console.log('[TOURNAMENT] 🔄 State after toggle:', tournamentState?.isPaused);
+        console.log('[TOURNAMENT] ⏱️ Time value after toggle:', tournamentState?.levelTime);
+        const currentState = localStorage.getItem(`tournamentState`);
+        console.log('[TOURNAMENT] 🔄 localStorage after toggle:', currentState ? JSON.parse(currentState).isPaused : 'not found');
+      }, 100);
+      
+    } catch (error) {
+      console.error('[TOURNAMENT] ❌ Error toggling pause state:', error);
+    }
   };
   
   // Modify the addAnnouncement function to also create a notification
@@ -1006,30 +1116,151 @@ function TournamentViewContent() {
       .map(player => player.finishPosition as number);
   };
 
+  // Add a new table function that ensures persistence
+  const addTable = () => {
+    if (!tournamentState) return;
+
+    // Find the highest table number currently in use
+    const tableNumbers = players
+      .map(player => player.tableNumber)
+      .filter(num => num !== undefined) as number[];
+    
+    // Also consider any existing tables in tournamentState
+    const existingTableNumbers = (tournamentState.tables || []).map(table => table.tableNumber);
+    
+    // Also check the tables state array
+    const stateTableNumbers = tables.map(table => table.id);
+    
+    const allTableNumbers = [...tableNumbers, ...existingTableNumbers, ...stateTableNumbers];
+    const maxTableNumber = allTableNumbers.length > 0 ? Math.max(...allTableNumbers) : 0;
+    const newTableNumber = maxTableNumber + 1;
+    
+    console.log(`Creating new table #${newTableNumber} for tournament ${tournamentId}`);
+    
+    // Create a new empty table
+    const newTable = {
+      tableNumber: newTableNumber,
+      isEmpty: true
+    };
+    
+    // Create new table for tables state array
+    const newTableConfig: TableConfig = {
+      id: newTableNumber,
+      maxSeats: 9
+    };
+    
+    // Update both state arrays
+    
+    // 1. Update the tournamentState tables
+    const updatedState = {
+      ...tournamentState,
+      tables: [...(tournamentState.tables || []), newTable]
+    };
+    setTournamentState(updatedState);
+    
+    // 2. Update the tables state array
+    const updatedTables = [...tables, newTableConfig];
+    setTables(updatedTables);
+    
+    // Save to all storage methods to ensure maximum persistence
+    try {
+      // 1. Save to tournamentState in localStorage
+      localStorage.setItem(`tournament_state_${tournamentId}`, JSON.stringify(updatedState));
+      console.log(`✅ Saved table #${newTableNumber} to tournament_state_${tournamentId}`);
+      
+      // 2. Save to dedicated tables storage with proper key
+      const savedToTablesStorage = saveTables(tournamentId, updatedTables);
+      console.log(`✅ Saved table #${newTableNumber} to dedicated tables storage: ${savedToTablesStorage ? 'Success' : 'Failed'}`);
+      
+      // 3. Save complete tournament state
+      const savedComplete = saveCompleteTournamentState(tournamentId, updatedState, players, updatedTables);
+      console.log(`✅ Saved table #${newTableNumber} to complete tournament state: ${savedComplete ? 'Success' : 'Failed'}`);
+      
+      // 4. As a backup, also save with a generic key
+      localStorage.setItem('tables', JSON.stringify(updatedTables));
+      
+      // Verify tables were saved correctly
+      setTimeout(() => {
+        const storedTables = getTables(tournamentId);
+        console.log(`⚠️ Verification: ${storedTables.length} tables found in storage after save`);
+        console.log(`⚠️ Table #${newTableNumber} exists in storage: ${storedTables.some(t => t.id === newTableNumber)}`);
+        
+        // Additional verification
+        const tournamentStateJson = localStorage.getItem(`tournament_state_${tournamentId}`);
+        if (tournamentStateJson) {
+          const parsedState = JSON.parse(tournamentStateJson);
+          console.log(`⚠️ Tables in saved state: ${parsedState.tables ? parsedState.tables.length : 0}`);
+        }
+      }, 100);
+      
+      // Add confirmation notification
+      setNotifications(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          message: `Table ${newTableNumber} has been created`,
+          type: 'success',
+          time: new Date().toISOString(),
+          read: false
+        }
+      ]);
+    } catch (error) {
+      console.error('Failed to save table to localStorage:', error);
+      
+      // Add error notification
+      setNotifications(prev => [
+        ...prev,
+        {
+          id: Date.now().toString(),
+          message: 'Failed to save table: ' + (error instanceof Error ? error.message : 'Unknown error'),
+          type: 'error',
+          time: new Date().toISOString(),
+          read: false
+        }
+      ]);
+    }
+  };
+
   // Determine which content to show first
   const renderMainContent = () => {
     // Always show the selected tab content first
     if (activeTab === 'players' || mobileTab === 'players') {
-  return (
-        <>
-          {/* Players Tab */}
-          <div className="bg-gray-800 rounded-lg p-6 mb-6">
-            <h2 className="text-lg font-bold mb-4">Player Management</h2>
-            <PlayerManager 
-              tournamentId={tournament?.id || ''}
-              buyIn={tournament?.buyIn || 0}
-              startingChips={tournament?.startingChips || 0}
-              allowRebuys={true}
-              allowAddOns={tournament?.allowAddOns || false}
-              rebuyAmount={tournament?.rebuyAmount || 0}
-              rebuyChips={tournament?.rebuyChips || 0}
-              addOnAmount={tournament?.addOnAmount || 0}
-              addOnChips={tournament?.addOnChips || 0}
-              maxRebuys={tournament?.maxRebuys || 0}
-              initialPlayers={players}
-              onPlayerUpdate={handlePlayersUpdate}
-              findNextAvailableSeat={findNextAvailableSeat}
-            />
+      return (
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
+          <div className="w-full lg:w-3/4">
+            <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl md:text-2xl font-bold text-white">Player Management</h2>
+                
+                {/* Add button to manually add tables */}
+                <button
+                  onClick={addTable}
+                  className="bg-indigo-600 hover:bg-indigo-700 text-white px-3 py-2 rounded-lg text-sm font-medium flex items-center"
+                >
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6v6m0 0v6m0-6h6m-6 0H6" />
+                  </svg>
+                  Add Table
+                </button>
+              </div>
+              
+              {/* Existing PlayerManager component */}
+              <PlayerManager
+                tournamentId={tournamentId}
+                buyIn={tournament?.buyIn || 0}
+                startingChips={tournament?.startingChips || 0}
+                allowRebuys={true}
+                allowAddOns={tournament?.allowAddOns || false}
+                rebuyAmount={tournament?.rebuyAmount || 0}
+                rebuyChips={tournament?.rebuyChips || 0}
+                addOnAmount={tournament?.addOnAmount || 0}
+                addOnChips={tournament?.addOnChips || 0}
+                maxRebuys={tournament?.maxRebuys || 0}
+                initialPlayers={players}
+                onPlayerUpdate={handlePlayersUpdate}
+                findNextAvailableSeat={findNextAvailableSeat}
+              />
+            </div>
           </div>
           
           {/* Clock Tab (shown below in players view) */}
@@ -1041,7 +1272,7 @@ function TournamentViewContent() {
               ante={(tournamentState?.blinds?.ante || 0)}
               timeRemaining={tournamentState?.levelTime || 1200}
               isBreak={tournamentState?.isBreak || false}
-              isPaused={tournamentState?.isPaused || true}
+              isPaused={tournamentState ? tournamentState.isPaused : true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -1049,22 +1280,27 @@ function TournamentViewContent() {
               onPauseToggle={togglePause}
               onNextLevel={() => handleLevelChange('next')}
               onPrevLevel={() => handleLevelChange('prev')}
+              onTimeUpdate={handleTimeUpdate}
             />
           </div>
-        </>
+        </div>
       );
     } else if (activeTab === 'tables' || mobileTab === 'tables') {
       return (
-        <>
-          {/* Tables Tab */}
-          <div className="bg-gray-800 rounded-lg p-6 mb-6">
-            <h2 className="text-lg font-bold mb-4">Table Management</h2>
-            <TableManager 
-              maxPlayersPerTable={9}
-              players={players}
-              onPlayersUpdate={handlePlayersUpdate}
-            />
-        </div>
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
+          <div className="w-full lg:w-3/4">
+            <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl md:text-2xl font-bold text-white">Table Management</h2>
+              </div>
+              
+              <TableManager
+                maxPlayersPerTable={9}
+                players={players}
+                onPlayersUpdate={handlePlayersUpdate}
+              />
+            </div>
+          </div>
           
           {/* Clock Tab (shown below in tables view) */}
           <div className="space-y-6">
@@ -1075,7 +1311,7 @@ function TournamentViewContent() {
               ante={(tournamentState?.blinds?.ante || 0)}
               timeRemaining={tournamentState?.levelTime || 1200}
               isBreak={tournamentState?.isBreak || false}
-              isPaused={tournamentState?.isPaused || true}
+              isPaused={tournamentState ? tournamentState.isPaused : true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -1083,28 +1319,33 @@ function TournamentViewContent() {
               onPauseToggle={togglePause}
               onNextLevel={() => handleLevelChange('next')}
               onPrevLevel={() => handleLevelChange('prev')}
+              onTimeUpdate={handleTimeUpdate}
             />
+          </div>
         </div>
-        </>
       );
     } else if (activeTab === 'payouts' || mobileTab === 'payouts') {
       return (
-        <>
-          {/* Payouts Tab */}
-          <div className="bg-gray-800 rounded-lg p-6 mb-6">
-            <h2 className="text-lg font-bold mb-4">Payout Calculator</h2>
-            <PayoutCalculator 
-              entrants={tournamentStats.entrants}
-              buyIn={tournament?.buyIn || 0}
-              fees={tournament?.entryFee || 0}
-              rebuys={tournamentStats.totalRebuys}
-              rebuyAmount={tournament?.rebuyAmount || 0}
-              addOns={tournamentStats.totalAddOns}
-              addOnAmount={tournament?.addOnAmount || 0}
-              onPayoutsCalculated={handlePayoutsUpdate}
-            />
-      </div>
-      
+        <div className="flex flex-col lg:flex-row gap-4 items-start">
+          <div className="w-full lg:w-3/4">
+            <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+              <div className="flex justify-between items-center">
+                <h2 className="text-xl md:text-2xl font-bold text-white">Payout Calculator</h2>
+              </div>
+              
+              <PayoutCalculator
+                entrants={tournamentStats.entrants}
+                buyIn={tournament?.buyIn || 0}
+                fees={tournament?.entryFee || 0}
+                rebuys={tournamentStats.totalRebuys}
+                rebuyAmount={tournament?.rebuyAmount || 0}
+                addOns={tournamentStats.totalAddOns}
+                addOnAmount={tournament?.addOnAmount || 0}
+                onPayoutsCalculated={handlePayoutsUpdate}
+              />
+            </div>
+          </div>
+          
           {/* Clock Tab (shown below in payouts view) */}
           <div className="space-y-6">
             <TournamentClock 
@@ -1114,7 +1355,7 @@ function TournamentViewContent() {
               ante={(tournamentState?.blinds?.ante || 0)}
               timeRemaining={tournamentState?.levelTime || 1200}
               isBreak={tournamentState?.isBreak || false}
-              isPaused={tournamentState?.isPaused || true}
+              isPaused={tournamentState ? tournamentState.isPaused : true}
               prizePool={tournamentStats.prizePool}
               payouts={payouts}
               eliminatedPlayers={getEliminatedPositions()}
@@ -1122,9 +1363,10 @@ function TournamentViewContent() {
               onPauseToggle={togglePause}
               onNextLevel={() => handleLevelChange('next')}
               onPrevLevel={() => handleLevelChange('prev')}
+              onTimeUpdate={handleTimeUpdate}
             />
           </div>
-        </>
+        </div>
       );
     } else if (activeTab === 'blinds' || mobileTab === 'blinds') {
       return (
@@ -1234,105 +1476,106 @@ function TournamentViewContent() {
                   ))}
                 </tbody>
               </table>
-                  </div>
-                  </div>
+            </div>
+          </div>
         </motion.div>
       );
     } else {
       // Default clock view
       return (
-              <div className="space-y-6">
-                <TournamentClock 
+        <div className="space-y-6">
+          <TournamentClock 
             currentLevel={tournamentState?.currentLevel || 1}
             smallBlind={tournamentState?.blinds?.small || 25}
             bigBlind={tournamentState?.blinds?.big || 50}
             ante={(tournamentState?.blinds?.ante || 0)}
             timeRemaining={tournamentState?.levelTime || 1200}
             isBreak={tournamentState?.isBreak || false}
-            isPaused={tournamentState?.isPaused || true}
+            isPaused={tournamentState ? tournamentState.isPaused : true}
             prizePool={tournamentStats.prizePool}
             payouts={payouts}
             eliminatedPlayers={getEliminatedPositions()}
-                  onTimerEnd={handleTimerEnd}
-                  onPauseToggle={togglePause}
-                  onNextLevel={() => handleLevelChange('next')}
-                  onPrevLevel={() => handleLevelChange('prev')}
-                />
-                
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                  {/* Tournament Stats */}
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <h2 className="text-lg font-bold mb-4">Tournament Statistics</h2>
-                    <div className="grid grid-cols-2 gap-4 text-sm">
-                      <div>
-                        <div className="text-gray-400">Entrants</div>
+            onTimerEnd={handleTimerEnd}
+            onPauseToggle={togglePause}
+            onNextLevel={() => handleLevelChange('next')}
+            onPrevLevel={() => handleLevelChange('prev')}
+            onTimeUpdate={handleTimeUpdate}
+          />
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {/* Tournament Stats */}
+            <div className="bg-gray-800 rounded-lg p-6">
+              <h2 className="text-lg font-bold mb-4">Tournament Statistics</h2>
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <div className="text-gray-400">Entrants</div>
                   <div className="text-xl font-bold">{tournamentStats.entrants}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400">Remaining</div>
+                </div>
+                <div>
+                  <div className="text-gray-400">Remaining</div>
                   <div className="text-xl font-bold">{tournamentStats.remainingPlayers}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400">Average Stack</div>
+                </div>
+                <div>
+                  <div className="text-gray-400">Average Stack</div>
                   <div className="text-xl font-bold">
                     {tournamentStats.averageStack > 0 ? tournamentStats.averageStack.toLocaleString() : "-"}
                   </div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400">Tables</div>
-                  <div className="text-xl font-bold">{tournamentStats.tablesRemaining}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400">Prize Pool</div>
-                  <div className="text-xl font-bold">${tournamentStats.prizePool.toLocaleString()}</div>
-                      </div>
-                      <div>
-                        <div className="text-gray-400">Paying Places</div>
-                  <div className="text-xl font-bold">{tournamentStats.payingPlaces}</div>
-                      </div>
-                    </div>
-                  </div>
-                  
-                  {/* Announcements */}
-                  <div className="bg-gray-800 rounded-lg p-6">
-                    <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-lg font-bold">Announcements</h2>
-                      <button 
-                        className="text-xs bg-emerald-600 hover:bg-emerald-700 px-2 py-1 rounded"
-                        onClick={() => addAnnouncement("New announcement " + new Date().toLocaleTimeString())}
-                      >
-                        Add Announcement
-                      </button>
-                    </div>
-                    <ul className="space-y-2 max-h-40 overflow-y-auto">
-                {tournamentState?.announcements.map((announcement, i) => (
-                        <li 
-                          key={i} 
-                          className="text-sm p-2 rounded bg-gray-700 border-l-2 border-emerald-500"
-                        >
-                          {announcement}
-                        </li>
-                      ))}
-                    </ul>
-                  </div>
                 </div>
-                
-                {/* Blind Structure Preview */}
-                <div className="bg-gray-800 rounded-lg p-6">
-                  <h2 className="text-lg font-bold mb-4">Upcoming Levels</h2>
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead>
-                        <tr className="border-b border-gray-700">
-                          <th className="text-left p-2">Level</th>
-                          <th className="text-left p-2">Small Blind</th>
-                          <th className="text-left p-2">Big Blind</th>
-                          <th className="text-left p-2">Ante</th>
-                          <th className="text-left p-2 hidden md:table-cell">SB/BB Ratio</th>
-                          <th className="text-left p-2 hidden md:table-cell">BB/Starting Stack</th>
-                        </tr>
-                      </thead>
-                      <tbody>
+                <div>
+                  <div className="text-gray-400">Tables</div>
+                  <div className="text-xl font-bold">{tournamentStats.tablesRemaining}</div>
+                </div>
+                <div>
+                  <div className="text-gray-400">Prize Pool</div>
+                  <div className="text-xl font-bold">${tournamentStats.prizePool.toLocaleString()}</div>
+                </div>
+                <div>
+                  <div className="text-gray-400">Paying Places</div>
+                  <div className="text-xl font-bold">{tournamentStats.payingPlaces}</div>
+                </div>
+              </div>
+            </div>
+            
+            {/* Announcements */}
+            <div className="bg-gray-800 rounded-lg p-6">
+              <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold">Announcements</h2>
+                <button 
+                  className="text-xs bg-emerald-600 hover:bg-emerald-700 px-2 py-1 rounded"
+                  onClick={() => addAnnouncement("New announcement " + new Date().toLocaleTimeString())}
+                >
+                  Add Announcement
+                </button>
+              </div>
+              <ul className="space-y-2 max-h-40 overflow-y-auto">
+                {tournamentState?.announcements.map((announcement, i) => (
+                  <li 
+                    key={i} 
+                    className="text-sm p-2 rounded bg-gray-700 border-l-2 border-emerald-500"
+                  >
+                    {announcement}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          </div>
+          
+          {/* Blind Structure Preview */}
+          <div className="bg-gray-800 rounded-lg p-6">
+            <h2 className="text-lg font-bold mb-4">Upcoming Levels</h2>
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-gray-700">
+                    <th className="text-left p-2">Level</th>
+                    <th className="text-left p-2">Small Blind</th>
+                    <th className="text-left p-2">Big Blind</th>
+                    <th className="text-left p-2">Ante</th>
+                    <th className="text-left p-2 hidden md:table-cell">SB/BB Ratio</th>
+                    <th className="text-left p-2 hidden md:table-cell">BB/Starting Stack</th>
+                  </tr>
+                </thead>
+                <tbody>
                   {blindStructure.slice(
                     Math.max(0, (tournamentState?.currentLevel || 1) - 1), 
                     Math.min(blindStructure.length, (tournamentState?.currentLevel || 1) + 5)
@@ -1367,6 +1610,37 @@ function TournamentViewContent() {
                 </div>
         </div>
       );
+    }
+  };
+
+  // Add this function to handle time updates from the clock
+  const handleTimeUpdate = (newTime: number) => {
+    console.log(`[TOURNAMENT] 📥 Received time update from clock: ${newTime}s`);
+    
+    if (!tournamentState) return;
+    
+    // Only update the state if the time has changed significantly (to avoid unnecessary rerenders)
+    if (Math.abs(tournamentState.levelTime - newTime) >= 5) {
+      console.log(`[TOURNAMENT] ⏱️ Updating tournament time from ${tournamentState.levelTime}s to ${newTime}s`);
+      
+      // Create a shallow copy of the tournament state
+      const updatedState = {
+        ...tournamentState,
+        levelTime: newTime
+      };
+      
+      // Update the state
+      setTournamentState(updatedState);
+      
+      // Only save to localStorage occasionally to avoid performance issues
+      if (newTime % 30 === 0 || newTime <= 10) {
+        try {
+          localStorage.setItem(`tournamentState`, JSON.stringify(updatedState));
+          console.log(`[TOURNAMENT] 💾 Saved updated time to localStorage: ${newTime}s`);
+        } catch (error) {
+          console.error('[TOURNAMENT] ❌ Error saving updated time:', error);
+        }
+      }
     }
   };
 
@@ -1482,7 +1756,7 @@ function TournamentViewContent() {
                 ante={(tournamentState?.blinds?.ante || 0)}
                 timeRemaining={tournamentState?.levelTime || 1200}
                 isBreak={tournamentState?.isBreak || false}
-                isPaused={tournamentState?.isPaused || true}
+                isPaused={tournamentState ? tournamentState.isPaused : true}
                 prizePool={tournamentStats.prizePool}
                 payouts={payouts}
                 eliminatedPlayers={getEliminatedPositions()}
@@ -1490,6 +1764,7 @@ function TournamentViewContent() {
                 onPauseToggle={togglePause}
                 onNextLevel={() => handleLevelChange('next')}
                 onPrevLevel={() => handleLevelChange('prev')}
+                onTimeUpdate={handleTimeUpdate}
               />
             </motion.div>
           )}
@@ -1502,21 +1777,52 @@ function TournamentViewContent() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-                <PlayerManager 
-                tournamentId={tournament?.id || ''}
-                buyIn={tournament?.buyIn || 0}
-                startingChips={tournament?.startingChips || 0}
-                  allowRebuys={true}
-                allowAddOns={tournament?.allowAddOns || false}
-                rebuyAmount={tournament?.rebuyAmount || 0}
-                rebuyChips={tournament?.rebuyChips || 0}
-                addOnAmount={tournament?.addOnAmount || 0}
-                addOnChips={tournament?.addOnChips || 0}
-                maxRebuys={tournament?.maxRebuys || 0}
-                initialPlayers={players}
-                onPlayerUpdate={handlePlayersUpdate}
-                findNextAvailableSeat={findNextAvailableSeat}
-              />
+              <div className="flex flex-col lg:flex-row gap-4 items-start">
+                <div className="w-full lg:w-3/4">
+                  <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h2 className="text-xl md:text-2xl font-bold text-white">Player Management</h2>
+                    </div>
+                    
+                    <PlayerManager
+                      tournamentId={tournamentId}
+                      buyIn={tournament?.buyIn || 0}
+                      startingChips={tournament?.startingChips || 0}
+                      allowRebuys={true}
+                      allowAddOns={tournament?.allowAddOns || false}
+                      rebuyAmount={tournament?.rebuyAmount || 0}
+                      rebuyChips={tournament?.rebuyChips || 0}
+                      addOnAmount={tournament?.addOnAmount || 0}
+                      addOnChips={tournament?.addOnChips || 0}
+                      maxRebuys={tournament?.maxRebuys || 0}
+                      initialPlayers={players}
+                      onPlayerUpdate={handlePlayersUpdate}
+                      findNextAvailableSeat={findNextAvailableSeat}
+                    />
+                  </div>
+                </div>
+                
+                {/* Clock Tab (shown below in players view) */}
+                <div className="space-y-6">
+                  <TournamentClock 
+                    currentLevel={tournamentState?.currentLevel || 1}
+                    smallBlind={tournamentState?.blinds?.small || 25}
+                    bigBlind={tournamentState?.blinds?.big || 50}
+                    ante={(tournamentState?.blinds?.ante || 0)}
+                    timeRemaining={tournamentState?.levelTime || 1200}
+                    isBreak={tournamentState?.isBreak || false}
+                    isPaused={tournamentState ? tournamentState.isPaused : true}
+                    prizePool={tournamentStats.prizePool}
+                    payouts={payouts}
+                    eliminatedPlayers={getEliminatedPositions()}
+                    onTimerEnd={handleTimerEnd}
+                    onPauseToggle={togglePause}
+                    onNextLevel={() => handleLevelChange('next')}
+                    onPrevLevel={() => handleLevelChange('prev')}
+                    onTimeUpdate={handleTimeUpdate}
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
           
@@ -1528,11 +1834,42 @@ function TournamentViewContent() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-                <TableManager 
-                  maxPlayersPerTable={9}
-                players={players}
-                onPlayersUpdate={handlePlayersUpdate}
-              />
+              <div className="flex flex-col lg:flex-row gap-4 items-start">
+                <div className="w-full lg:w-3/4">
+                  <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h2 className="text-xl md:text-2xl font-bold text-white">Table Management</h2>
+                    </div>
+                    
+                    <TableManager
+                      maxPlayersPerTable={9}
+                      players={players}
+                      onPlayersUpdate={handlePlayersUpdate}
+                    />
+                  </div>
+                </div>
+                
+                {/* Clock Tab (shown below in tables view) */}
+                <div className="space-y-6">
+                  <TournamentClock 
+                    currentLevel={tournamentState?.currentLevel || 1}
+                    smallBlind={tournamentState?.blinds?.small || 25}
+                    bigBlind={tournamentState?.blinds?.big || 50}
+                    ante={(tournamentState?.blinds?.ante || 0)}
+                    timeRemaining={tournamentState?.levelTime || 1200}
+                    isBreak={tournamentState?.isBreak || false}
+                    isPaused={tournamentState ? tournamentState.isPaused : true}
+                    prizePool={tournamentStats.prizePool}
+                    payouts={payouts}
+                    eliminatedPlayers={getEliminatedPositions()}
+                    onTimerEnd={handleTimerEnd}
+                    onPauseToggle={togglePause}
+                    onNextLevel={() => handleLevelChange('next')}
+                    onPrevLevel={() => handleLevelChange('prev')}
+                    onTimeUpdate={handleTimeUpdate}
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
           
@@ -1544,16 +1881,47 @@ function TournamentViewContent() {
               exit={{ opacity: 0, y: -10 }}
               transition={{ duration: 0.3 }}
             >
-                <PayoutCalculator 
-                entrants={tournamentStats.entrants}
-                buyIn={tournament?.buyIn || 0}
-                fees={tournament?.entryFee || 0}
-                rebuys={tournamentStats.totalRebuys}
-                rebuyAmount={tournament?.rebuyAmount || 0}
-                addOns={tournamentStats.totalAddOns}
-                addOnAmount={tournament?.addOnAmount || 0}
-                  onPayoutsCalculated={handlePayoutsUpdate}
-                />
+              <div className="flex flex-col lg:flex-row gap-4 items-start">
+                <div className="w-full lg:w-3/4">
+                  <div className="bg-gray-900 rounded-xl p-4 md:p-6 space-y-4">
+                    <div className="flex justify-between items-center">
+                      <h2 className="text-xl md:text-2xl font-bold text-white">Payout Calculator</h2>
+                    </div>
+                    
+                    <PayoutCalculator
+                      entrants={tournamentStats.entrants}
+                      buyIn={tournament?.buyIn || 0}
+                      fees={tournament?.entryFee || 0}
+                      rebuys={tournamentStats.totalRebuys}
+                      rebuyAmount={tournament?.rebuyAmount || 0}
+                      addOns={tournamentStats.totalAddOns}
+                      addOnAmount={tournament?.addOnAmount || 0}
+                      onPayoutsCalculated={handlePayoutsUpdate}
+                    />
+                  </div>
+                </div>
+                
+                {/* Clock Tab (shown below in payouts view) */}
+                <div className="space-y-6">
+                  <TournamentClock 
+                    currentLevel={tournamentState?.currentLevel || 1}
+                    smallBlind={tournamentState?.blinds?.small || 25}
+                    bigBlind={tournamentState?.blinds?.big || 50}
+                    ante={(tournamentState?.blinds?.ante || 0)}
+                    timeRemaining={tournamentState?.levelTime || 1200}
+                    isBreak={tournamentState?.isBreak || false}
+                    isPaused={tournamentState ? tournamentState.isPaused : true}
+                    prizePool={tournamentStats.prizePool}
+                    payouts={payouts}
+                    eliminatedPlayers={getEliminatedPositions()}
+                    onTimerEnd={handleTimerEnd}
+                    onPauseToggle={togglePause}
+                    onNextLevel={() => handleLevelChange('next')}
+                    onPrevLevel={() => handleLevelChange('prev')}
+                    onTimeUpdate={handleTimeUpdate}
+                  />
+                </div>
+              </div>
             </motion.div>
           )}
           
@@ -1582,7 +1950,7 @@ function TournamentViewContent() {
                       >
                         Save Changes
                       </button>
-              </div>
+                    </div>
                   ) : (
                     <button
                       onClick={() => setIsEditingBlinds(true)}
@@ -1590,8 +1958,8 @@ function TournamentViewContent() {
                     >
                       Edit Blind Structure
                     </button>
-            )}
-          </div>
+                  )}
+                </div>
                 
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
@@ -1664,8 +2032,8 @@ function TournamentViewContent() {
                       ))}
                     </tbody>
                   </table>
-        </div>
-      </div>
+                </div>
+              </div>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1696,18 +2064,20 @@ function TournamentViewContent() {
   );
 }
 
-// Main export now uses Suspense
+// Main export now uses Suspense with our TournamentParams helper
 export default function TournamentView() {
   return (
     <Suspense fallback={
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-b from-[#111111] to-[#000000]">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-16 w-16 border-t-2 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <h2 className="text-xl font-semibold text-white">Loading tournament...</h2>
+      <div className="min-h-screen flex items-center justify-center bg-gray-900 text-white">
+        <div className="flex flex-col items-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-t-2 border-b-2 border-white mb-4"></div>
+          <p>Loading tournament...</p>
         </div>
       </div>
     }>
-      <TournamentViewContent />
+      <TournamentParams>
+        {(searchParams) => <TournamentViewContent searchParams={searchParams} />}
+      </TournamentParams>
     </Suspense>
   );
 } 

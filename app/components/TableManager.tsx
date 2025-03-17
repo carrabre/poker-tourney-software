@@ -298,15 +298,22 @@ const TableManager: React.FC<TableManagerProps> = ({
   
   // Get all active tables from players data
   const getActiveTables = () => {
-    const tables = new Set<number>();
+    // Start with tables from players data
+    const activeTableSet = new Set<number>();
     
+    // Add tables with players
     players.forEach(player => {
       if (player.status === 'active' && player.tableNumber) {
-        tables.add(player.tableNumber);
+        activeTableSet.add(player.tableNumber);
       }
     });
     
-    return Array.from(tables).sort((a, b) => a - b);
+    // Add tables from our tables state, which includes empty tables
+    tables.forEach(table => {
+      activeTableSet.add(table.tableNumber);
+    });
+    
+    return Array.from(activeTableSet).sort((a, b) => a - b);
   };
   
   const activeTables = getActiveTables();

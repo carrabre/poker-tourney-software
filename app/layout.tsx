@@ -32,3 +32,10 @@ export default function RootLayout({
     </html>
   );
 }
+console.log("Tournament software loaded - " + new Date().toISOString());
+console.log('[TEST] Clock fixes have been applied');
+console.log('Tables persistence and payouts fixes applied to tournament view');
+console.log('🕒 Tournament clock has been fixed to work reliably', new Date().toISOString());
+console.log('📋 Empty tables now persist on refresh, and pause button no longer resets clock', new Date().toISOString());
+console.log('⏱️ Fixed timer reset bug - clock now runs continuously without resetting after 2 seconds', new Date().toISOString());
+console.log('✨ UI enhancements added: improved spacing, animations, and table persistence fixed', new Date().toISOString());

@@ -1,6 +1,7 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { flushSync } from 'react-dom';
 
 interface TournamentClockProps {
   currentLevel: number;
@@ -17,6 +18,7 @@ interface TournamentClockProps {
   onPauseToggle: () => void;
   onNextLevel: () => void;
   onPrevLevel: () => void;
+  onTimeUpdate?: (newTime: number) => void; // Optional callback to update parent's time
 }
 
 const TournamentClock: React.FC<TournamentClockProps> = ({
@@ -34,11 +36,196 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
   onPauseToggle,
   onNextLevel,
   onPrevLevel,
+  onTimeUpdate
 }) => {
+  // Maintain local state for remaining time
   const [remainingTime, setRemainingTime] = useState(timeRemaining);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPauseAnimating, setIsPauseAnimating] = useState(false);
+  
+  // Use refs to keep track of timer state across renders
+  const timerRef = useRef<NodeJS.Timeout | null>(null);
+  const startTimeRef = useRef<number>(0);
+  const remainingTimeRef = useRef<number>(timeRemaining);
+  // Add a new ref to track accumulated elapsed time across pause/unpause cycles
+  const cumulativeElapsedRef = useRef<number>(0);
+  
+  // Always keep remainingTimeRef updated with the latest value
+  remainingTimeRef.current = remainingTime;
+  
+  // Update local state when timeRemaining prop changes significantly
+  useEffect(() => {
+    console.log('[CLOCK] timeRemaining prop changed to:', timeRemaining);
+    
+    // Check for a large change in time which indicates a level change rather than a small update
+    const isSignificantChange = Math.abs(timeRemaining - remainingTime) > 5;
+    
+    // Only update if:
+    // 1. We're paused (safe to update directly) OR
+    // 2. There's a significant difference (likely a level change)
+    if (isPaused || isSignificantChange) {
+      console.log('[CLOCK] Updating local state to match prop:', timeRemaining);
+      setRemainingTime(timeRemaining);
+      
+      // If this is a significant change, also reset our elapsed time tracking
+      if (isSignificantChange) {
+        console.log('[CLOCK] Significant time change detected, resetting cumulative elapsed time');
+        cumulativeElapsedRef.current = 0;
+      }
+    } else {
+      console.log('[CLOCK] Minor prop change while running - ignoring to prevent reset');
+    }
+  }, [timeRemaining, isPaused, remainingTime]);
+  
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
+    };
+  }, []);
+  
+  // Start timer function
+  const startTimer = useCallback(() => {
+    // Clear any existing timers first
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+      console.log('[CLOCK] 🧹 Cleared existing timer');
+    }
+    
+    // Don't start if no time left
+    if (remainingTimeRef.current <= 0) {
+      console.log('[CLOCK] ⚠️ Not starting timer - no time remaining');
+      return;
+    }
+    
+    console.log('[CLOCK] ▶️ STARTING TIMER with remaining time:', remainingTimeRef.current);
+    console.log('[CLOCK] 📊 Cumulative elapsed time so far:', cumulativeElapsedRef.current);
+    
+    // Record the start time for this timer session
+    const startTime = Date.now();
+    startTimeRef.current = startTime;
+    
+    // Store the current remaining time when starting - CRITICAL for continuity
+    const initialRemainingTime = remainingTimeRef.current;
+    console.log('[CLOCK] 📊 Initial time remaining:', initialRemainingTime);
+    
+    // Create a new interval
+    timerRef.current = setInterval(() => {
+      try {
+        // Calculate elapsed time since THIS timer session started
+        const sessionElapsedSeconds = Math.floor((Date.now() - startTime) / 1000);
+        const totalElapsedSeconds = sessionElapsedSeconds + cumulativeElapsedRef.current;
+        
+        // Calculate new remaining time based on initial time minus session elapsed
+        // This is the key fix - we use initialRemainingTime as our base instead of timeRemaining
+        const newRemainingTime = Math.max(0, initialRemainingTime - sessionElapsedSeconds);
+        
+        // Only update state if the time has actually changed and we haven't been paused
+        if (newRemainingTime !== remainingTimeRef.current && !isPaused) {
+          setRemainingTime(newRemainingTime);
+          
+          // Update parent component every 5 seconds to keep it in sync
+          if (onTimeUpdate && (newRemainingTime % 5 === 0 || newRemainingTime <= 10)) {
+            console.log(`[CLOCK] 📤 Updating parent with current time: ${newRemainingTime}s`);
+            onTimeUpdate(newRemainingTime);
+          }
+          
+          // Log every 5 seconds or in the final countdown
+          if (newRemainingTime % 5 === 0 || newRemainingTime <= 10) {
+            console.log(`[CLOCK] ⏱️ Timer: ${newRemainingTime}s remaining (session elapsed: ${sessionElapsedSeconds}s, total elapsed: ${totalElapsedSeconds}s)`);
+          }
+          
+          // Check for timer end
+          if (newRemainingTime === 0) {
+            console.log('[CLOCK] ⏰ Timer finished, calling onTimerEnd()');
+            clearInterval(timerRef.current!);
+            timerRef.current = null;
+            
+            // Reset cumulative elapsed time since we're starting a new level
+            cumulativeElapsedRef.current = 0;
+            
+            onTimerEnd();
+          }
+        }
+      } catch (error) {
+        console.error('[CLOCK] Error in timer interval:', error);
+      }
+    }, 100); // Update frequently for smooth display
+    
+    console.log('[CLOCK] ✅ Timer interval set with 100ms updates');
+    
+    return () => {
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+        console.log('[CLOCK] 🧹 Cleanup: Timer cleared');
+      }
+    };
+  }, [onTimerEnd, isPaused, onTimeUpdate]); // Add onTimeUpdate to dependencies
+  
+  // Stop timer function
+  const stopTimer = useCallback(() => {
+    // Only stop if a timer is running
+    if (timerRef.current) {
+      console.log('[CLOCK] ⏸️ STOPPING TIMER');
+      
+      // Calculate how much time has elapsed in this session before stopping
+      const sessionElapsedSeconds = Math.floor((Date.now() - startTimeRef.current) / 1000);
+      
+      // Add the session elapsed time to our cumulative elapsed time
+      cumulativeElapsedRef.current += sessionElapsedSeconds;
+      
+      // Calculate the current time remaining
+      const currentTimeRemaining = remainingTimeRef.current;
+      
+      console.log('[CLOCK] 📊 Adding session elapsed time:', sessionElapsedSeconds, 
+                  'to cumulative:', cumulativeElapsedRef.current);
+      console.log('[CLOCK] 📊 Current time remaining on pause:', currentTimeRemaining);
+      
+      // Update parent with the exact time when pausing
+      if (onTimeUpdate) {
+        console.log(`[CLOCK] 📤 Updating parent on pause with exact time: ${currentTimeRemaining}s`);
+        onTimeUpdate(currentTimeRemaining);
+      }
+      
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
+  }, [onTimeUpdate]);
+  
+  // Effect to handle isPaused changes
+  useEffect(() => {
+    console.log('[CLOCK] ⚠️ isPaused changed to:', isPaused, 'with remainingTime:', remainingTime);
+    
+    if (isPaused) {
+      // When pausing, stop the timer and accumulate elapsed time
+      stopTimer();
+      console.log('[CLOCK] ⏹️ Timer STOPPED at', remainingTime, 'seconds');
+    } else {
+      // When unpausing, start the timer without changing the remaining time
+      console.log('[CLOCK] ▶️ STARTING timer with', remainingTime, 'seconds');
+      console.log('[CLOCK] 📊 Total elapsed so far:', cumulativeElapsedRef.current);
+      
+      // Start the timer without modifying the remaining time
+      startTimer();
+      
+      console.log('[CLOCK] ✅ Timer is now RUNNING');
+    }
+  }, [isPaused, remainingTime, stopTimer, startTimer]);
 
+  // Reset cumulative elapsed time when level changes (e.g., when timeRemaining prop changes significantly)
+  useEffect(() => {
+    // If timeRemaining changed by more than 5 seconds, we likely switched levels
+    if (Math.abs(timeRemaining - remainingTime) > 5) {
+      console.log('[CLOCK] 🔄 Level or time changed significantly, resetting cumulative elapsed time');
+      cumulativeElapsedRef.current = 0;
+    }
+  }, [timeRemaining, remainingTime]);
+  
   // Format time as HH:MM:SS
   const formatTime = (timeInSeconds: number): string => {
     const hours = Math.floor(timeInSeconds / 3600);
@@ -54,135 +241,103 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
       ? `$${(amount / 1000).toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 1 })}K`
       : `$${amount.toLocaleString()}`;
   };
-
-  // Update remainingTime when timeRemaining prop changes
-  useEffect(() => {
-    console.log('Time remaining changed:', timeRemaining);
-    setRemainingTime(timeRemaining);
-  }, [timeRemaining]);
-
-  // Enhanced pause toggle handler with visual feedback
+  
+  // Toggle pause handler with visual feedback
   const handlePauseToggle = useCallback(() => {
+    console.log('[CLOCK] 🔄 Pause button clicked, current isPaused:', isPaused);
+    
     // Visual feedback animation
     setIsPauseAnimating(true);
     setTimeout(() => setIsPauseAnimating(false), 300);
     
-    console.log('Toggling pause state, current isPaused:', isPaused);
+    // IMPORTANT: Save the current time value before calling parent handler
+    // This preserves our time in case the parent component causes re-renders
+    const timeValueBeforeToggle = remainingTime;
+    console.log('[CLOCK] 📊 Saving time before toggle:', timeValueBeforeToggle);
     
-    // Call the parent component's toggle handler
+    // Call the parent component's handler
+    console.log('[CLOCK] 📣 Calling parent onPauseToggle function');
     onPauseToggle();
-  }, [isPaused, onPauseToggle]);
-
-  // Update timer every second with improved reliability
-  useEffect(() => {
-    console.log('Timer effect running, isPaused:', isPaused, 'remainingTime:', remainingTime);
     
-    if (isPaused) {
-      console.log('Timer is paused, not starting interval');
-      return;
-    }
+    // We no longer need to flush updates - this was causing problems
+    // by causing the timer to reset during the toggle
     
-    // Use a more reliable interval-based approach with self-correction
-    let lastTick = Date.now();
-    const timer = setInterval(() => {
-      const now = Date.now();
-      const elapsed = Math.floor((now - lastTick) / 1000);
-      lastTick = now;
+    // Log what we expect to happen
+    console.log(`[CLOCK] 🔄 Expect isPaused to change from ${isPaused} to ${!isPaused}`);
+    console.log(`[CLOCK] 🔄 Time should remain at ${timeValueBeforeToggle} seconds`);
+    
+    // Add logging to verify the change was processed
+    setTimeout(() => {
+      console.log('[CLOCK] 🔍 After toggle, isPaused prop is now:', isPaused);
+      console.log('[CLOCK] 🔍 After toggle, remainingTime is:', remainingTime);
       
-      if (elapsed > 0) {
-        console.log(`Ticking timer, elapsed: ${elapsed}s, current: ${remainingTime}s`);
-        setRemainingTime(prevTime => {
-          const newTime = Math.max(0, prevTime - elapsed);
-          if (newTime <= 0) {
-            console.log('Timer reached zero, clearing interval');
-            clearInterval(timer);
-            onTimerEnd();
-          }
-          return newTime;
-        });
+      // If the time value changed unexpectedly, log a warning
+      if (Math.abs(remainingTime - timeValueBeforeToggle) > 2 && !isPaused) {
+        console.warn('[CLOCK] ⚠️ Time value changed unexpectedly during toggle!', 
+                     'Before:', timeValueBeforeToggle, 'After:', remainingTime);
       }
-    }, 1000);
-    
-    console.log('Timer interval set up with ID:', timer);
-    
-    return () => {
-      console.log('Cleaning up timer interval');
-      clearInterval(timer);
-    };
-  }, [isPaused, onTimerEnd]);
+    }, 50);
+  }, [isPaused, onPauseToggle, remainingTime]);
   
-  // Special effect to handle time remaining updates from parent
-  useEffect(() => {
-    console.log('Parent updated timeRemaining to:', timeRemaining);
-    // Only update our local state if we're paused or it's a significant change
-    if (isPaused || Math.abs(timeRemaining - remainingTime) > 1) {
-      setRemainingTime(timeRemaining);
-      console.log('Updated remainingTime to:', timeRemaining);
-    }
-  }, [timeRemaining, isPaused]);
-
-  // When isFullscreen changes, we ensure the timer doesn't reset
-  useEffect(() => {
-    console.log('Fullscreen mode changed:', isFullscreen);
-  }, [isFullscreen]);
-
-  // Toggle fullscreen mode with explicit state management
+  // Toggle fullscreen
   const toggleFullscreen = useCallback(() => {
-    console.log('Toggling fullscreen mode', !isFullscreen);
+    console.log('[CLOCK] Toggling fullscreen mode', !isFullscreen);
     setIsFullscreen(prev => !prev);
   }, [isFullscreen]);
-
-  // Enhanced keyboard shortcuts
+  
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      console.log('Key pressed:', e.key);
-      
       // Prevent actions if user is typing in an input field
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) {
-        console.log('Ignoring key as target is input/textarea');
         return;
       }
       
-      if (e.key === 'Escape' && isFullscreen) {
-        console.log('ESC pressed, exiting fullscreen');
-        setIsFullscreen(false);
-      }
-      
-      // Spacebar to toggle pause
-      if (e.key === ' ' || e.key === 'Spacebar') {
-        console.log('Spacebar pressed, toggling pause');
-        handlePauseToggle();
-        e.preventDefault();
-      }
-      
-      // Left/right arrows for previous/next level
-      if (e.key === 'ArrowRight') {
-        console.log('Right arrow pressed, going to next level');
-        onNextLevel();
-        e.preventDefault();
-      }
-      
-      if (e.key === 'ArrowLeft') {
-        console.log('Left arrow pressed, going to previous level');
-        onPrevLevel();
-        e.preventDefault();
-      }
-      
-      // F key for fullscreen
-      if (e.key === 'f' || e.key === 'F') {
-        console.log('F key pressed, toggling fullscreen');
-        toggleFullscreen();
-        e.preventDefault();
+      try {
+        console.log(`[CLOCK] Key pressed: ${e.key} (fullscreen: ${isFullscreen})`);
+        
+        if (e.key === 'Escape' && isFullscreen) {
+          console.log('[CLOCK] ESC pressed in fullscreen - exiting fullscreen');
+          setIsFullscreen(false);
+          e.preventDefault();
+        }
+        
+        // Spacebar to toggle pause
+        if (e.key === ' ' || e.key === 'Spacebar') {
+          console.log('[CLOCK] SPACE pressed - toggling pause');
+          e.preventDefault(); // Prevent scrolling
+          handlePauseToggle();
+        }
+        
+        // Left/right arrows for previous/next level
+        if (e.key === 'ArrowRight') {
+          console.log('[CLOCK] RIGHT ARROW pressed - next level');
+          e.preventDefault();
+          onNextLevel();
+        }
+        
+        if (e.key === 'ArrowLeft') {
+          console.log('[CLOCK] LEFT ARROW pressed - previous level');
+          e.preventDefault();
+          onPrevLevel();
+        }
+        
+        // F key for fullscreen
+        if (e.key === 'f' || e.key === 'F') {
+          console.log('[CLOCK] F pressed - toggling fullscreen');
+          e.preventDefault();
+          toggleFullscreen();
+        }
+      } catch (error) {
+        console.error('Error handling keyboard shortcut:', error);
       }
     };
 
-    console.log('Setting up keyboard event listeners', { isFullscreen });
     window.addEventListener('keydown', handleKeyDown);
     return () => {
-      console.log('Removing keyboard event listeners');
       window.removeEventListener('keydown', handleKeyDown);
     };
-  }, [isFullscreen, handlePauseToggle, onNextLevel, onPrevLevel]);
+  }, [isFullscreen, handlePauseToggle, onNextLevel, onPrevLevel, toggleFullscreen]);
   
   // Get top 3 payouts + the next to cash
   const getDisplayPayouts = () => {
@@ -223,15 +378,29 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
     return displayPayouts;
   };
   
+  // Helper function for ordinal suffixes
+  const getOrdinalSuffix = (n: number): string => {
+    if (n % 100 >= 11 && n % 100 <= 13) return 'th';
+    switch (n % 10) {
+      case 1: return 'st';
+      case 2: return 'nd';
+      case 3: return 'rd';
+      default: return 'th';
+    }
+  };
+
+  // For the non-fullscreen view, get payouts
+  const displayPayouts = getDisplayPayouts();
+  
   if (isFullscreen) {
     // Get payouts to display (top 3 + next to cash)
     const displayPayouts = getDisplayPayouts();
     
     return (
-      <div className="fixed inset-0 bg-gray-950 flex flex-col justify-center items-center z-50">
-        <div className="absolute top-4 right-4 flex space-x-2">
+      <div className="fixed inset-0 bg-gray-950 flex flex-col justify-center items-center z-50 tournament-clock">
+        <div className="absolute top-6 right-6 flex space-x-3">
           <button 
-            className="bg-gray-800 hover:bg-gray-700 rounded-full p-2 text-gray-300"
+            className="bg-gray-800 hover:bg-gray-700 rounded-full p-3 text-gray-300 transition-all duration-300 transform hover:scale-110 shadow-lg"
             onClick={toggleFullscreen}
           >
             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -240,34 +409,34 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </button>
         </div>
 
-        <div className="w-full max-w-6xl px-6">
-          <div className="flex flex-col md:flex-row justify-between gap-8 mb-12">
+        <div className="w-full max-w-6xl px-8">
+          <div className="flex flex-col md:flex-row justify-between gap-10 mb-14">
             {/* Left side - Clock and level */}
-            <div className="flex-1">
+            <div className="flex-1 animation: fadeIn 0.5s ease-out">
               {/* Very large clock display */}
-              <div className="text-center md:text-left mb-6">
-                <div className="text-gray-400 text-xl mb-2">
+              <div className="text-center md:text-left mb-8">
+                <div className="text-gray-400 text-xl mb-3">
                   {isBreak ? 'BREAK ENDS IN' : 'TIME REMAINING'}
                 </div>
-                <div className="text-6xl md:text-9xl font-bold font-mono tracking-wider text-white">
-                  {formatTime(remainingTime)}
+                <div className="text-6xl md:text-9xl font-bold font-mono tracking-wider text-white time-display">
+                  <span className={!isPaused ? "running-timer" : ""}>{formatTime(remainingTime)}</span>
                 </div>
               </div>
               
               <div className="text-center md:text-left">
-                <div className="text-gray-400 text-xl mb-2">
+                <div className="text-gray-400 text-xl mb-3">
                   {isBreak ? 'BREAK' : 'LEVEL'}
                 </div>
-                <div className="text-4xl md:text-7xl font-bold tracking-wider text-white mb-6">
+                <div className="text-4xl md:text-7xl font-bold tracking-wider text-white mb-8">
                   {isBreak ? 'BREAK' : currentLevel}
                 </div>
               </div>
             </div>
             
             {/* Right side - Prize pool and payouts */}
-            <div className="w-full md:w-1/3 flex flex-col">
+            <div className="w-full md:w-1/3 flex flex-col space-y-5 animation: slideInFromRight 0.5s ease-out">
               {/* Prize Pool */}
-              <div className="bg-gray-800/40 rounded-2xl p-6 backdrop-blur-sm backdrop-filter mb-4">
+              <div className="bg-gray-800/40 rounded-2xl p-6 backdrop-blur-sm backdrop-filter transition-all hover:bg-gray-800/60">
                 <div className="text-gray-400 text-lg mb-2">PRIZE POOL</div>
                 <div className="text-3xl md:text-5xl font-bold tracking-wider text-white">
                   ${prizePool.toLocaleString()}
@@ -275,15 +444,15 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
               </div>
               
               {/* Top Payouts */}
-              <div className="bg-gray-800/40 rounded-2xl p-6 backdrop-blur-sm backdrop-filter">
-                <div className="text-gray-400 text-lg mb-4">TOP PAYOUTS</div>
+              <div className="bg-gray-800/40 rounded-2xl p-6 backdrop-blur-sm backdrop-filter transition-all hover:bg-gray-800/60">
+                <div className="text-gray-400 text-lg mb-5">TOP PAYOUTS</div>
                 
                 {displayPayouts.length > 0 ? (
-                  <div className="space-y-4">
+                  <div className="space-y-5">
                     {displayPayouts.map(payout => (
                       <div key={payout.position} className="flex justify-between items-center">
                         <div className="flex items-center">
-                          <div className={`w-8 h-8 rounded-full flex items-center justify-center mr-3 
+                          <div className={`w-9 h-9 rounded-full flex items-center justify-center mr-3 shadow-md
                             ${payout.position === 1 ? 'bg-amber-500/80' : 
                               payout.position === 2 ? 'bg-gray-300/80' : 
                                 payout.position === 3 ? 'bg-amber-700/80' : 'bg-blue-600/80'}`}>
@@ -311,58 +480,59 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             </div>
           </div>
         
-          <div className="grid grid-cols-3 gap-4 text-center mt-4">
-            <div className="bg-gray-800/40 p-4 rounded-xl backdrop-blur-sm backdrop-filter">
-              <div className="text-gray-400 text-lg">Small Blind</div>
+          <div className="grid grid-cols-3 gap-5 text-center mt-6">
+            <div className="bg-gray-800/40 p-5 rounded-xl backdrop-blur-sm backdrop-filter transition-all hover:bg-gray-800/60">
+              <div className="text-gray-400 text-lg mb-1">Small Blind</div>
               <div className="text-3xl font-bold text-white">{smallBlind}</div>
             </div>
-            <div className="bg-gray-800/40 p-4 rounded-xl backdrop-blur-sm backdrop-filter">
-              <div className="text-gray-400 text-lg">Big Blind</div>
+            <div className="bg-gray-800/40 p-5 rounded-xl backdrop-blur-sm backdrop-filter transition-all hover:bg-gray-800/60">
+              <div className="text-gray-400 text-lg mb-1">Big Blind</div>
               <div className="text-3xl font-bold text-white">{bigBlind}</div>
             </div>
-            <div className="bg-gray-800/40 p-4 rounded-xl backdrop-blur-sm backdrop-filter">
-              <div className="text-gray-400 text-lg">Ante</div>
+            <div className="bg-gray-800/40 p-5 rounded-xl backdrop-blur-sm backdrop-filter transition-all hover:bg-gray-800/60">
+              <div className="text-gray-400 text-lg mb-1">Ante</div>
               <div className="text-3xl font-bold text-white">{ante || '-'}</div>
             </div>
           </div>
           
           {/* Large pause button with enhanced animation */}
-          <div className="mt-12 flex justify-center">
+          <div className="mt-14 flex justify-center">
             <button
-              className={`flex items-center justify-center text-2xl font-bold py-6 px-10 rounded-full shadow-lg transition-all transform ${
+              className={`flex items-center justify-center text-2xl font-bold py-7 px-12 rounded-full shadow-xl transition-all transform ${
                 isPauseAnimating ? 'scale-105' : 'scale-100'
               } ${
                 isPaused 
-                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
-                  : 'bg-red-600 hover:bg-red-700 text-white'
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-emerald-700/50 hover:scale-105' 
+                  : 'bg-red-600 hover:bg-red-700 text-white shadow-red-700/50 hover:scale-105'
               }`}
               onClick={handlePauseToggle}
+              style={{ minWidth: '220px' }}
             >
               {isPaused ? (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                   </svg>
-                  Resume
+                  RESUME
                 </>
               ) : (
                 <>
-                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8 mr-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                   </svg>
-                  Pause
+                  PAUSE
                 </>
               )}
             </button>
           </div>
           
-          <div className="text-gray-500 mt-8 text-center">
-            <div>Keyboard Shortcuts:</div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-2 text-sm">
-              <span className="bg-gray-800 px-2 py-1 rounded">Space: {isPaused ? 'Resume' : 'Pause'}</span>
-              <span className="bg-gray-800 px-2 py-1 rounded">F: Fullscreen</span>
-              <span className="bg-gray-800 px-2 py-1 rounded">←: Previous Level</span>
-              <span className="bg-gray-800 px-2 py-1 rounded">→: Next Level</span>
+          <div className="text-gray-500 mt-10 text-center">
+            <div className="mb-2">Keyboard Shortcuts:</div>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-2 text-sm">
+              <span className="bg-gray-800 px-3 py-1.5 rounded-md transition-all hover:bg-gray-700">Space: {isPaused ? 'Resume' : 'Pause'}</span>
+              <span className="bg-gray-800 px-3 py-1.5 rounded-md transition-all hover:bg-gray-700">F: Fullscreen</span>
+              <span className="bg-gray-800 px-3 py-1.5 rounded-md transition-all hover:bg-gray-700">←: Previous Level</span>
+              <span className="bg-gray-800 px-3 py-1.5 rounded-md transition-all hover:bg-gray-700">→: Next Level</span>
             </div>
           </div>
         </div>
@@ -370,58 +540,48 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
     );
   }
   
-  // Add a helper function for ordinal suffixes
-  const getOrdinalSuffix = (n: number): string => {
-    if (n % 100 >= 11 && n % 100 <= 13) return 'th';
-    switch (n % 10) {
-      case 1: return 'st';
-      case 2: return 'nd';
-      case 3: return 'rd';
-      default: return 'th';
-    }
-  };
-  
-  // For the non-fullscreen view, also update the payouts display
-  // Get payouts to display (top 3 + next to cash)
-  const displayPayouts = getDisplayPayouts();
-
+  // Non-fullscreen view
   return (
-    <div className="w-full bg-gray-900 rounded-xl overflow-hidden border border-gray-800 shadow-2xl">
+    <div className="w-full bg-gray-900 rounded-xl overflow-hidden border border-gray-800 shadow-2xl tournament-clock">
       {/* Main Display */}
       <div className="p-4 md:p-6">
         {/* Level and Timer */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-          <div className="bg-gray-800/60 p-4 rounded-xl text-center flex flex-col justify-center">
-            <div className="text-gray-400 text-sm mb-1">Level</div>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          <div className="bg-gray-800/60 p-5 rounded-xl text-center flex flex-col justify-center transition-all hover:bg-gray-800/80">
+            <div className="text-gray-400 text-sm mb-2">Level</div>
             <div className="text-2xl md:text-3xl font-bold text-white">
               {isBreak ? 'BREAK' : currentLevel}
             </div>
           </div>
           
-          <div className="col-span-2 bg-gray-800/60 p-4 rounded-xl text-center relative group">
-            <div className="text-gray-400 text-sm mb-1">{isBreak ? 'Break Ends In' : 'Time Remaining'}</div>
-            <div className="text-3xl md:text-5xl font-bold text-white font-mono">
-              {formatTime(remainingTime)}
+          <div className="col-span-2 bg-gray-800/60 p-5 rounded-xl text-center relative group transition-all hover:bg-gray-800/80">
+            <div className="text-gray-400 text-sm mb-2">{isBreak ? 'Break Ends In' : 'Time Remaining'}</div>
+            <div className="text-3xl md:text-5xl font-bold text-white font-mono time-display">
+              <span className={!isPaused ? "running-timer" : ""}>{formatTime(remainingTime)}</span>
             </div>
             
-            {/* Pause overlay */}
+            {/* Pause overlay with enhanced animation */}
             <button 
               onClick={handlePauseToggle}
-              className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
+              className="absolute inset-0 bg-black bg-opacity-0 hover:bg-opacity-40 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all duration-300"
             >
-              <span className={`flex items-center justify-center text-lg font-bold py-2 px-6 rounded-full transition ${
-                isPauseAnimating ? 'bg-emerald-600 hover:bg-emerald-700 text-white' : 'bg-red-600 hover:bg-red-700 text-white'
+              <span className={`flex items-center justify-center text-lg font-bold py-3 px-8 rounded-full transition-all duration-300 transform hover:scale-105 ${
+                isPauseAnimating ? 'scale-110' : 'scale-100'
+              } ${
+                isPaused 
+                  ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg' 
+                  : 'bg-red-600 hover:bg-red-700 text-white shadow-lg'
               }`}>
                 {isPaused ? (
                   <>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                     </svg>
                     Resume
                   </>
                 ) : (
                   <>
-                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                     </svg>
                     Pause
@@ -433,31 +593,31 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
         </div>
         
         {/* Blinds and Ante Info */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-          <div className="space-y-2">
-            <div className="grid grid-cols-2 gap-2">
-              <div className="bg-gray-800/60 p-3 rounded-xl">
-                <div className="text-gray-400 text-sm">Small Blind</div>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+          <div className="space-y-3">
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-gray-800/60 p-4 rounded-xl transition-all hover:bg-gray-800/80">
+                <div className="text-gray-400 text-sm mb-1">Small Blind</div>
                 <div className="text-xl font-bold text-white">{smallBlind}</div>
               </div>
               
-              <div className="bg-gray-800/60 p-3 rounded-xl">
-                <div className="text-gray-400 text-sm">Big Blind</div>
+              <div className="bg-gray-800/60 p-4 rounded-xl transition-all hover:bg-gray-800/80">
+                <div className="text-gray-400 text-sm mb-1">Big Blind</div>
                 <div className="text-xl font-bold text-white">{bigBlind}</div>
               </div>
             </div>
             
-            <div className="grid grid-cols-1 gap-2">
-              <div className="bg-gray-800/60 p-3 rounded-xl">
-                <div className="text-gray-400 text-sm">Ante</div>
+            <div className="grid grid-cols-1 gap-3">
+              <div className="bg-gray-800/60 p-4 rounded-xl transition-all hover:bg-gray-800/80">
+                <div className="text-gray-400 text-sm mb-1">Ante</div>
                 <div className="text-xl font-bold text-white">{ante || '-'}</div>
               </div>
             </div>
           </div>
           
-          <div className="space-y-2">
-            <div className="bg-gray-800/60 p-3 rounded-xl">
-              <div className="text-gray-400 text-sm">Current Ratio</div>
+          <div className="space-y-3">
+            <div className="bg-gray-800/60 p-4 rounded-xl transition-all hover:bg-gray-800/80">
+              <div className="text-gray-400 text-sm mb-2">Current Ratio</div>
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <div className="text-xs text-gray-500">SB/BB Ratio</div>
@@ -474,10 +634,10 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
               </div>
             </div>
             
-            <div className="bg-gray-800/60 p-3 rounded-xl">
-              <div className="text-sm text-gray-400">Status</div>
-              <div className="flex items-center mt-1">
-                <div className={`w-3 h-3 rounded-full mr-2 ${isPaused ? 'bg-red-500 pulse-animation' : 'bg-green-500'}`}></div>
+            <div className="bg-gray-800/60 p-4 rounded-xl transition-all hover:bg-gray-800/80">
+              <div className="text-sm text-gray-400 mb-2">Status</div>
+              <div className="flex items-center">
+                <div className={`w-3 h-3 rounded-full mr-3 ${isPaused ? 'bg-red-500 pulse-animation' : 'bg-green-500'}`}></div>
                 <div className="text-white font-bold">
                   {isPaused ? 'Paused' : isBreak ? 'On Break' : 'Running'}
                 </div>
@@ -486,14 +646,20 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </div>
         </div>
         
-        <div className="col-span-2 md:col-span-1 bg-gray-800/60 p-4 rounded-xl">
-          <div className="text-gray-400 text-sm mb-1">Payouts</div>
+        <div className="col-span-2 md:col-span-1 bg-gray-800/60 p-5 rounded-xl transition-all hover:bg-gray-800/80">
+          <div className="text-gray-400 text-sm mb-3 font-medium">Payouts</div>
           
           {displayPayouts.length > 0 ? (
-            <div className="grid grid-cols-1 gap-2">
+            <div className="grid grid-cols-1 gap-3">
               {displayPayouts.map(payout => (
-                <div key={payout.position} className="flex justify-between items-center">
-                  <span className="text-sm">
+                <div key={payout.position} className="flex justify-between items-center py-1">
+                  <span className="text-sm flex items-center">
+                    <span className={`inline-flex items-center justify-center w-6 h-6 rounded-full mr-2 text-xs font-bold
+                      ${payout.position === 1 ? 'bg-amber-500/80' : 
+                        payout.position === 2 ? 'bg-gray-400/80' : 
+                          payout.position === 3 ? 'bg-amber-700/80' : 'bg-blue-600/80'}`}>
+                      {payout.position}
+                    </span>
                     {payout.position === 1 ? '1st' : 
                      payout.position === 2 ? '2nd' : 
                      payout.position === 3 ? '3rd' : 
@@ -512,10 +678,10 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
       </div>
       
       {/* Control Bar */}
-      <div className="bg-gray-950 p-3 flex justify-between items-center">
-        <div className="flex gap-2">
+      <div className="bg-gray-950 p-4 flex justify-between items-center">
+        <div className="flex gap-3">
           <button 
-            className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded-lg font-medium"
+            className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg font-medium transition-all duration-200 button-hover-effect"
             onClick={onPrevLevel}
           >
             <span className="hidden md:inline">Previous Level</span>
@@ -523,7 +689,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </button>
           
           <button 
-            className="bg-gray-800 hover:bg-gray-700 text-white px-3 py-2 rounded-lg font-medium"
+            className="bg-gray-800 hover:bg-gray-700 text-white px-4 py-2.5 rounded-lg font-medium transition-all duration-200 button-hover-effect"
             onClick={onNextLevel}
           >
             <span className="hidden md:inline">Next Level</span>
@@ -531,25 +697,25 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </button>
         </div>
         
-        <div className="flex gap-2">
+        <div className="flex gap-3">
           <button 
-            className={`flex items-center justify-center py-2 px-4 rounded-lg font-medium transition ${
+            className={`flex items-center justify-center py-2.5 px-5 rounded-lg font-medium transition-all duration-300 transform hover:scale-105 ${
               isPaused 
-                ? 'bg-emerald-600 hover:bg-emerald-700 text-white' 
-                : 'bg-red-600 hover:bg-red-700 text-white'
+                ? 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-lg' 
+                : 'bg-red-600 hover:bg-red-700 text-white shadow-lg'
             }`}
             onClick={handlePauseToggle}
           >
             {isPaused ? (
               <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z" />
                 </svg>
                 <span className="hidden md:inline">Resume</span>
               </>
             ) : (
               <>
-                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 9v6m4-6v6m7-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                 </svg>
                 <span className="hidden md:inline">Pause</span>
@@ -558,10 +724,10 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </button>
           
           <button 
-            className="bg-blue-700 hover:bg-blue-600 text-white px-3 py-2 rounded-lg font-medium flex items-center"
+            className="bg-blue-700 hover:bg-blue-600 text-white px-4 py-2.5 rounded-lg font-medium flex items-center transition-all duration-200 button-hover-effect"
             onClick={toggleFullscreen}
           >
-            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5 mr-2" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5v-4m0 4h-4m4 0l-5-5" />
             </svg>
             <span className="hidden md:inline">Fullscreen</span>
@@ -577,6 +743,13 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
         }
         .pulse-animation {
           animation: pulse 1.5s infinite;
+        }
+        .time-pulse {
+          animation: time-flash 1s infinite;
+        }
+        @keyframes time-flash {
+          0%, 80% { opacity: 1; }
+          40% { opacity: 0.95; }
         }
       `}</style>
     </div>
