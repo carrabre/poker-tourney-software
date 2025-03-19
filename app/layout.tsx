@@ -14,22 +14,22 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Allins.party | Poker Tournament Manager",
-  description: "Beautiful, intuitive tournament management for the modern poker director",
+  title: "Poker Tournament Manager",
+  description: "Professional poker tournament management software",
   icons: {
-    icon: '/images/logo.svg',
+    icon: '/favicon.ico',
   },
 };
 
 export default function RootLayout({
   children,
-}: Readonly<{
-  children: React.ReactNode;
-}>) {
+}: {
+  children: React.ReactNode
+}) {
   return (
     <html lang="en">
       <head>
-        <link rel="icon" href="/images/logo.svg" />
+        <link rel="icon" href="/favicon.ico" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import TournamentClock from '../../components/TournamentClock';
+import { useRouter } from 'next/router';
 
 const ViewTournament = () => {
   // Tournament state (in a real app, this would come from a database)
@@ -97,6 +98,62 @@ const ViewTournament = () => {
     });
     setNewAnnouncement('');
   };
+
+  // Get the tournament ID from the URL or use 'demo' as fallback
+  const tournamentId = useRouter().query.id as string || 'demo';
+
+  // Add this useEffect to save and restore the tournament state from localStorage
+  useEffect(() => {
+    // Function to save tournament state to localStorage
+    const saveTournamentStateToLocalStorage = () => {
+      if (tournament) {
+        try {
+          const state = {
+            ...tournament,
+            lastUpdated: new Date().toISOString()
+          };
+          localStorage.setItem(`tournament_state_${tournamentId}`, JSON.stringify(state));
+          console.log(`[TOURNAMENT] 💾 Saved tournament state to localStorage`);
+        } catch (error) {
+          console.error('[TOURNAMENT] ❌ Error saving tournament state:', error);
+        }
+      }
+    };
+
+    // Save state before the page unloads
+    window.addEventListener('beforeunload', saveTournamentStateToLocalStorage);
+    
+    // Also save on visibility change (tab switching)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        saveTournamentStateToLocalStorage();
+      }
+    };
+    
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Try to restore state on component mount
+    const restoreTournamentState = () => {
+      try {
+        const savedStateJson = localStorage.getItem(`tournament_state_${tournamentId}`);
+        if (savedStateJson) {
+          const savedState = JSON.parse(savedStateJson);
+          console.log(`[TOURNAMENT] 📋 Restored tournament state from localStorage`);
+          setTournament(savedState);
+        }
+      } catch (error) {
+        console.error('[TOURNAMENT] ❌ Error restoring tournament state:', error);
+      }
+    };
+    
+    restoreTournamentState();
+    
+    // Cleanup
+    return () => {
+      window.removeEventListener('beforeunload', saveTournamentStateToLocalStorage);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [tournamentId, tournament]);
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-gray-900 to-black text-white">

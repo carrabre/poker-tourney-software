@@ -2,6 +2,17 @@
 
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { flushSync } from 'react-dom';
+import Image from 'next/image';
+import { 
+  saveClockState, 
+  getClockState, 
+  calculateAdjustedRemainingTime, 
+  registerPersistenceHandlers,
+  ClockState as PersistentClockState
+} from '../utils/persistenceUtils';
+
+// Define constants for localStorage keys
+const CLOCK_STATE_PREFIX = 'tournament_clock_state_';
 
 interface TournamentClockProps {
   currentLevel: number;
@@ -38,10 +49,15 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
   onPrevLevel,
   onTimeUpdate
 }) => {
+  // Unique tournament ID - using a combination of values to create a unique identifier
+  // In a real app, you'd have an actual tournament ID from your database
+  const tournamentId = useRef(`tournament_${currentLevel}_${smallBlind}_${bigBlind}`);
+  
   // Maintain local state for remaining time
   const [remainingTime, setRemainingTime] = useState(timeRemaining);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isPauseAnimating, setIsPauseAnimating] = useState(false);
+  const [initialized, setInitialized] = useState(false);
   
   // Use refs to keep track of timer state across renders
   const timerRef = useRef<NodeJS.Timeout | null>(null);
@@ -52,41 +68,98 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
   
   // Always keep remainingTimeRef updated with the latest value
   remainingTimeRef.current = remainingTime;
-  
-  // Update local state when timeRemaining prop changes significantly
-  useEffect(() => {
-    console.log('[CLOCK] timeRemaining prop changed to:', timeRemaining);
+
+  // Get current clock state for persistence
+  const getCurrentClockState = useCallback(() => {
+    return {
+      tournamentId: tournamentId.current,
+      remainingTime: remainingTimeRef.current,
+      isPaused,
+      currentLevel,
+      cumulativeElapsedTime: cumulativeElapsedRef.current,
+    };
+  }, [isPaused, currentLevel]);
+
+  // Handle restored state from localStorage
+  const handleRestoredState = useCallback((state: PersistentClockState) => {
+    console.log('[CLOCK] 🔄 Handling restored state:', state);
     
-    // Check for a large change in time which indicates a level change rather than a small update
-    const isSignificantChange = Math.abs(timeRemaining - remainingTime) > 5;
+    // Calculate the proper time based on whether the clock was paused
+    const adjustedTime = calculateAdjustedRemainingTime(state);
     
-    // Only update if:
-    // 1. We're paused (safe to update directly) OR
-    // 2. There's a significant difference (likely a level change)
-    if (isPaused || isSignificantChange) {
-      console.log('[CLOCK] Updating local state to match prop:', timeRemaining);
-      setRemainingTime(timeRemaining);
-      
-      // If this is a significant change, also reset our elapsed time tracking
-      if (isSignificantChange) {
-        console.log('[CLOCK] Significant time change detected, resetting cumulative elapsed time');
-        cumulativeElapsedRef.current = 0;
-      }
-    } else {
-      console.log('[CLOCK] Minor prop change while running - ignoring to prevent reset');
+    // Update local time
+    setRemainingTime(adjustedTime);
+    
+    // Restore cumulative elapsed time
+    cumulativeElapsedRef.current = state.cumulativeElapsedTime;
+    
+    // Update parent with restored time
+    if (onTimeUpdate) {
+      onTimeUpdate(adjustedTime);
     }
-  }, [timeRemaining, isPaused, remainingTime]);
-  
+    
+    // Sync pause state with parent if needed
+    if (state.isPaused !== isPaused && onPauseToggle) {
+      console.log('[CLOCK] 🔄 Syncing pause state with parent');
+      setTimeout(() => onPauseToggle(), 0);
+    }
+  }, [onTimeUpdate, onPauseToggle, isPaused]);
+
+  // Initialize component and restore state
+  useEffect(() => {
+    if (!initialized && typeof window !== 'undefined') {
+      // Try to restore saved state
+      const savedState = getClockState(tournamentId.current);
+      
+      if (savedState) {
+        handleRestoredState(savedState);
+      }
+      
+      // Mark as initialized
+      setInitialized(true);
+    }
+  }, [initialized, handleRestoredState]);
+
+  // Register persistence handlers
+  useEffect(() => {
+    // Only register after initialization
+    if (initialized) {
+      console.log('[CLOCK] 🔌 Registering persistence handlers for', tournamentId.current);
+      
+      // Register handlers for page unload and visibility changes
+      const cleanup = registerPersistenceHandlers(
+        tournamentId.current,
+        getCurrentClockState,
+        handleRestoredState
+      );
+      
+      return cleanup;
+    }
+  }, [initialized, getCurrentClockState, handleRestoredState]);
+
+  // Save state when important values change
+  useEffect(() => {
+    if (initialized) {
+      saveClockState(tournamentId.current, getCurrentClockState());
+    }
+  }, [initialized, remainingTime, isPaused, currentLevel, getCurrentClockState]);
+
   // Cleanup on unmount
   useEffect(() => {
     return () => {
+      // Save final state
+      if (initialized) {
+        saveClockState(tournamentId.current, getCurrentClockState());
+      }
+      
+      // Clear any timers
       if (timerRef.current) {
         clearInterval(timerRef.current);
         timerRef.current = null;
       }
     };
-  }, []);
-  
+  }, [initialized, getCurrentClockState]);
+
   // Start timer function
   const startTimer = useCallback(() => {
     // Clear any existing timers first
@@ -134,6 +207,16 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             onTimeUpdate(newRemainingTime);
           }
           
+          // Save to localStorage occasionally for persistence
+          if (newRemainingTime % 10 === 0 || newRemainingTime <= 10) {
+            saveClockState(tournamentId.current, {
+              remainingTime: newRemainingTime,
+              isPaused,
+              currentLevel,
+              cumulativeElapsedTime: cumulativeElapsedRef.current,
+            });
+          }
+          
           // Log every 5 seconds or in the final countdown
           if (newRemainingTime % 5 === 0 || newRemainingTime <= 10) {
             console.log(`[CLOCK] ⏱️ Timer: ${newRemainingTime}s remaining (session elapsed: ${sessionElapsedSeconds}s, total elapsed: ${totalElapsedSeconds}s)`);
@@ -147,6 +230,9 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             
             // Reset cumulative elapsed time since we're starting a new level
             cumulativeElapsedRef.current = 0;
+            
+            // Save final state
+            saveClockState(tournamentId.current, getCurrentClockState());
             
             onTimerEnd();
           }
@@ -165,7 +251,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
         console.log('[CLOCK] 🧹 Cleanup: Timer cleared');
       }
     };
-  }, [onTimerEnd, isPaused, onTimeUpdate]); // Add onTimeUpdate to dependencies
+  }, [onTimerEnd, isPaused, onTimeUpdate, currentLevel, getCurrentClockState]); 
   
   // Stop timer function
   const stopTimer = useCallback(() => {
@@ -192,10 +278,13 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
         onTimeUpdate(currentTimeRemaining);
       }
       
+      // Save the current state to localStorage when pausing
+      saveClockState(tournamentId.current, getCurrentClockState());
+      
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-  }, [onTimeUpdate]);
+  }, [onTimeUpdate, getCurrentClockState]);
   
   // Effect to handle isPaused changes
   useEffect(() => {
@@ -205,6 +294,9 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
       // When pausing, stop the timer and accumulate elapsed time
       stopTimer();
       console.log('[CLOCK] ⏹️ Timer STOPPED at', remainingTime, 'seconds');
+      
+      // When paused, save state immediately
+      saveClockState(tournamentId.current, getCurrentClockState());
     } else {
       // When unpausing, start the timer without changing the remaining time
       console.log('[CLOCK] ▶️ STARTING timer with', remainingTime, 'seconds');
@@ -215,7 +307,7 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
       
       console.log('[CLOCK] ✅ Timer is now RUNNING');
     }
-  }, [isPaused, remainingTime, stopTimer, startTimer]);
+  }, [isPaused, remainingTime, stopTimer, startTimer, getCurrentClockState]);
 
   // Reset cumulative elapsed time when level changes (e.g., when timeRemaining prop changes significantly)
   useEffect(() => {
@@ -223,8 +315,18 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
     if (Math.abs(timeRemaining - remainingTime) > 5) {
       console.log('[CLOCK] 🔄 Level or time changed significantly, resetting cumulative elapsed time');
       cumulativeElapsedRef.current = 0;
+      
+      // Update remaining time to match the new level time
+      setRemainingTime(timeRemaining);
+      
+      // Save updated state when level changes
+      saveClockState(tournamentId.current, {
+        ...getCurrentClockState(),
+        remainingTime: timeRemaining,
+        cumulativeElapsedTime: 0,
+      });
     }
-  }, [timeRemaining, remainingTime]);
+  }, [timeRemaining, remainingTime, getCurrentClockState]);
   
   // Format time as HH:MM:SS
   const formatTime = (timeInSeconds: number): string => {
@@ -537,10 +639,14 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
           </div>
         </div>
         
-        {/* Powered by badge */}
-        <div className="absolute bottom-4 right-4 text-xs text-gray-500 opacity-70 hover:opacity-100 transition-opacity duration-300 flex items-center">
-          <span className="mr-1 hidden md:inline">Powered by</span>
-          <span className="font-bold">ETH.cash</span>
+        {/* Logo badge - updated implementation */}
+        <div className="absolute bottom-4 right-4 opacity-80 hover:opacity-100 transition-opacity duration-300 flex items-center">
+          <div style={{ width: '40px', height: '40px', position: 'relative' }}>
+            <svg width="40" height="40" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="256" cy="256" r="256" fill="#4CAF50"/>
+              <path d="M382 234H170.8l48.6-48.6c9.4-9.4 9.4-24.6 0-34-9.4-9.4-24.6-9.4-34 0l-96 96c-9.4 9.4-9.4 24.6 0 34l96 96c4.7 4.7 10.8 7 17 7s12.3-2.3 17-7c9.4-9.4 9.4-24.6 0-34L170.8 278H382c13.3 0 24-10.7 24-24s-10.7-24-24-24z" fill="#000000"/>
+            </svg>
+          </div>
         </div>
       </div>
     );
@@ -738,6 +844,14 @@ const TournamentClock: React.FC<TournamentClockProps> = ({
             </svg>
             <span className="hidden md:inline">Fullscreen</span>
           </button>
+          
+          {/* Inline SVG logo */}
+          <div className="ml-2 hidden md:block">
+            <svg width="28" height="28" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="256" cy="256" r="256" fill="#4CAF50"/>
+              <path d="M382 234H170.8l48.6-48.6c9.4-9.4 9.4-24.6 0-34-9.4-9.4-24.6-9.4-34 0l-96 96c-9.4 9.4-9.4 24.6 0 34l96 96c4.7 4.7 10.8 7 17 7s12.3-2.3 17-7c9.4-9.4 9.4-24.6 0-34L170.8 278H382c13.3 0 24-10.7 24-24s-10.7-24-24-24z" fill="#000000"/>
+            </svg>
+          </div>
         </div>
       </div>
       
