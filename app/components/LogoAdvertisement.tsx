@@ -31,13 +31,13 @@ export const LogoAdvertisement = () => {
         className="block relative"
       >
         <div className="relative flex items-center">
-          <div className="w-10 h-10 md:w-12 md:h-12 flex items-center justify-center shadow-lg rounded-full
-                          animate-glowPulse hover:animate-none transition-all duration-300 overflow-hidden">
+          <div className="w-[3.75rem] h-[3.75rem] md:w-[4.5rem] md:h-[4.5rem] flex items-center justify-center shadow-lg rounded-full
+                          animate-glowPulse hover:animate-none transition-all duration-300 overflow-hidden bg-white p-1.5">
             <Image
               src="/images/ethcash.png"
               alt="EthCash Logo"
-              width={75}
-              height={75}
+              width={177}
+              height={177}
               className="object-contain"
             />
           </div>
